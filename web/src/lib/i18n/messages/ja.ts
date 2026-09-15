@@ -537,6 +537,8 @@ export const ja: Dictionary = {
   "chat.copyOutput.label": "出力をコピー",
   "chat.copyOutput.done": "出力をクリップボードにコピーしました",
   "chat.copyOutput.failed": "出力をコピーできませんでした",
+  "chat.speech.readReply": "最新の回答を読み上げる",
+  "chat.speech.stop": "読み上げを停止",
   "chat.paneMenu.aria": "ペイン操作",
   "chat.header.openOverviewAria": "{workspace} の概要を開く{status}",
   "chat.progress.aria": "進捗",

@@ -39,6 +39,20 @@ export function cacheStorage(): CacheStorage | null {
   return globalThis.caches ?? null;
 }
 
+export interface DeviceSpeechCapability {
+  synthesis: SpeechSynthesis;
+  Utterance: typeof SpeechSynthesisUtterance;
+}
+
+/** The page's local text-to-speech engine, or null where the browser provides none. */
+export function deviceSpeechCapability(): DeviceSpeechCapability | null {
+  if (!hasWindow()) return null;
+  const synthesis = globalThis.window.speechSynthesis;
+  const Utterance = globalThis.window.SpeechSynthesisUtterance;
+  if (synthesis === undefined || Utterance === undefined) return null;
+  return { synthesis, Utterance };
+}
+
 /** True where element resizes can be observed. jsdom has no `ResizeObserver`. */
 export function hasResizeObserver(): boolean {
   return globalThis.ResizeObserver !== undefined;

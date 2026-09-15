@@ -526,6 +526,8 @@ export const zhTW: Dictionary = {
   "chat.copyOutput.label": "複製輸出",
   "chat.copyOutput.done": "已將輸出複製到剪貼簿",
   "chat.copyOutput.failed": "無法複製輸出",
+  "chat.speech.readReply": "朗讀最新回覆",
+  "chat.speech.stop": "停止朗讀",
   "chat.paneMenu.aria": "窗格選單",
   "chat.header.openOverviewAria": "開啟 {workspace} 總覽{status}",
   "chat.progress.aria": "進度",

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bug, Copy, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, SquareTerminal, XCircle } from "lucide-react";
+import { Bug, Copy, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, Square, SquareTerminal, Volume2, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { WalkyIcon } from "@/components/walky-icon";
@@ -70,10 +70,14 @@ interface PaneActionsSheetProps {
    * pane view passes it; the strip does not, and absence is the gate as it is for the others.
    */
   onMessages?: () => void;
+  /** Read the latest finished reply with this device's own voice, or stop the active reading. */
+  onReadReply?: () => void;
+  /** The read-reply action is currently speaking, so its row becomes the stop control. */
+  readingReply?: boolean;
   /** Open this pane's own settings — today one switch, the prompt-cache warning (ADR 0042).
    *
-   *  The FOURTH read row, and it is a read in the sense the other three are: it changes a preference on
-   *  this collie and types into nothing. Absence is the gate, as it is for find, history and zen — the
+   *  It is a read in the sense the other optional rows are: it changes a preference on this collie
+   *  and types into nothing. Absence is the gate, as it is for find, history, speech and zen — the
    *  pane strip passes no callback, so a strip pill opens the sheet it always did. */
   onSettings?: () => void;
   /**
@@ -115,8 +119,8 @@ interface PaneActionsSheetProps {
   paneViewNote?: string;
   /** Enter zen mode — hide every Collie surface and leave the mirror alone on the screen.
    *
-   *  The THIRD read row, and it is gated twice through this one prop: `Settings → Zen mode` decides
-   *  whether this phone offers zen at all, and the pane header only passes a callback when there is
+   *  It is gated twice through this one prop: `Settings → Zen mode` decides whether this phone offers
+   *  zen at all, and the pane header only passes a callback when there is
    *  buffered output to look at. Absence IS the gate, exactly as it is for find and history above —
    *  a device that never asked for zen sees a sheet byte-identical to today's. */
   onZen?: () => void;
@@ -156,7 +160,7 @@ const NO_HERD: readonly AgentView[] = [];
 type Mode = "actions" | "rename";
 
 // The actions for a single pane. THREE entry points, one sheet: long-pressing (or re-tapping) a pane
-// pill in the strip, the ⋮ button in the pane header — which is why find, history and zen live
+// pill in the strip, the ⋮ button in the pane header — which is why find, history, speech and zen live
 // here rather than in a second menu of their own — and a hold on a dashboard row (ADR 0070). The
 // header used to spend two of its four slots on those two icons; the pane already had a menu, so they
 // became rows in it.
@@ -178,6 +182,8 @@ export function PaneActionsSheet({
   onFind,
   onHistory,
   onCopyOutput,
+  onReadReply,
+  readingReply = false,
   onSettings,
   onReport,
   onMessages,
@@ -422,6 +428,22 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onHistory();
+              }}
+            />
+          )}
+          {onReadReply && (
+            <ActionRow
+              icon={
+                readingReply ? (
+                  <Square className="size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Volume2 className="size-4 shrink-0 text-muted-foreground" />
+                )
+              }
+              label={t(readingReply ? "chat.speech.stop" : "chat.speech.readReply")}
+              onClick={() => {
+                onClose();
+                onReadReply();
               }}
             />
           )}
