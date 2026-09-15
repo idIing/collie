@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Monitor, Pencil, ScrollText, Search, SlidersHorizontal, XCircle } from "lucide-react";
+import {
+  Maximize2,
+  Monitor,
+  Pencil,
+  ScrollText,
+  Search,
+  SlidersHorizontal,
+  Square,
+  Volume2,
+  XCircle,
+} from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -47,16 +57,20 @@ interface PaneActionsSheetProps {
   onFind?: () => void;
   /** Open the agent's own transcript. */
   onHistory?: () => void;
+  /** Read the latest finished reply with this device's own voice, or stop the active reading. */
+  onReadReply?: () => void;
+  /** The read-reply action is currently speaking, so its row becomes the stop control. */
+  readingReply?: boolean;
   /** Open this pane's own settings — today one switch, the prompt-cache warning (ADR 0042).
    *
-   *  The FOURTH read row, and it is a read in the sense the other three are: it changes a preference on
-   *  this collie and types into nothing. Absence is the gate, as it is for find, history and zen — the
+   *  It is a read in the sense the other optional rows are: it changes a preference on this collie
+   *  and types into nothing. Absence is the gate, as it is for find, history, speech and zen — the
    *  pane strip passes no callback, so a strip pill opens the sheet it always did. */
   onSettings?: () => void;
   /** Enter zen mode — hide every Collie surface and leave the mirror alone on the screen.
    *
-   *  The THIRD read row, and it is gated twice through this one prop: `Settings → Zen mode` decides
-   *  whether this phone offers zen at all, and the pane header only passes a callback when there is
+   *  It is gated twice through this one prop: `Settings → Zen mode` decides whether this phone offers
+   *  zen at all, and the pane header only passes a callback when there is
    *  buffered output to look at. Absence IS the gate, exactly as it is for find and history above —
    *  a device that never asked for zen sees a sheet byte-identical to today's. */
   onZen?: () => void;
@@ -65,7 +79,7 @@ interface PaneActionsSheetProps {
 type Mode = "actions" | "rename";
 
 // The actions for a single pane. TWO entry points, one sheet: long-pressing (or re-tapping) a pane
-// pill in the strip, and the ⋮ button in the pane header — which is why find, history and zen live
+// pill in the strip, and the ⋮ button in the pane header — which is why find, history, speech and zen live
 // here rather than in a second menu of their own. The header used to spend two of its four slots on those
 // two icons; the pane already had a menu, so they became rows in it.
 // Rename (set/clear its label) and close (kill). Opens on an action-list view; rename is a second
@@ -84,6 +98,8 @@ export function PaneActionsSheet({
   onClosed,
   onFind,
   onHistory,
+  onReadReply,
+  readingReply = false,
   onSettings,
   onZen,
 }: PaneActionsSheetProps) {
@@ -263,7 +279,7 @@ export function PaneActionsSheet({
           sheet; rename and close are the half you arrive at deliberately.
           Hidden in `rename` mode with the rest of the list — that view is a sub-screen, not a
           section. */}
-      {mode === "actions" && (onFind || onHistory || onSettings || onZen) && (
+      {mode === "actions" && (onFind || onHistory || onReadReply || onSettings || onZen) && (
         <div className="mb-1 flex flex-col gap-1">
           {onFind && (
             <ActionRow
@@ -284,6 +300,22 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onHistory();
+              }}
+            />
+          )}
+          {onReadReply && (
+            <ActionRow
+              icon={
+                readingReply ? (
+                  <Square className="size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Volume2 className="size-4 shrink-0 text-muted-foreground" />
+                )
+              }
+              label={t(readingReply ? "chat.speech.stop" : "chat.speech.readReply")}
+              onClick={() => {
+                onClose();
+                onReadReply();
               }}
             />
           )}

@@ -284,6 +284,8 @@ export const de: Dictionary = {
   "chat.strips.show.panes": "Panes anzeigen. {panes} ausgeblendet.",
   "chat.find.label": "In Ausgabe suchen",
   "chat.history.label": "Verlauf",
+  "chat.speech.readReply": "Neueste Antwort vorlesen",
+  "chat.speech.stop": "Vorlesen stoppen",
   "chat.paneMenu.aria": "Pane-Aktionen",
   "chat.header.openOverviewAria": "Übersicht für {workspace} öffnen{status}",
   "chat.header.statusAria": ", {label}",

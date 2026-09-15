@@ -18,6 +18,7 @@ import { useLaunchers } from "@/lib/launchers";
 import { buzz } from "@/lib/haptics";
 import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useLatestReply } from "@/hooks/use-latest-reply";
+import { useDeviceSpeech } from "@/hooks/use-device-speech";
 import { useMirrorImages } from "@/hooks/use-mirror-images";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
@@ -68,7 +69,8 @@ import { submitMenuKeys } from "@/lib/menu-action";
 import type { PromptBlockAction } from "@/components/prompt-select-block";
 import type { PreviewBlockAction } from "@/components/preview-select-block";
 import type { MenuBlockAction } from "@/components/menu-block";
-import { locateReply } from "@/lib/latest-reply";
+import { locateReply, replyIsOnMirror } from "@/lib/latest-reply";
+import { replySpeechChunks } from "@/lib/reply-speech";
 import { canGrowRequestedLines, growRequestedLines } from "@/lib/loaders";
 import { paneName, panePlaceParts } from "@/lib/pane-name";
 import { useMuxCapability } from "@/lib/mux-capability";
@@ -193,7 +195,7 @@ export function AgentChat({
 }: AgentChatProps) {
   const revalidator = useRevalidator();
   const navigate = useNavigate();
-  useLocale();
+  const { locale } = useLocale();
   // Poll-truth "is the data on screen not live". The one header shell derives the same boolean from
   // the same two root-snapshot fields to drive the Collie mark; here we use it to dim the header's
   // status dot AND its status word, so the pane stops presenting the last snapshot's status as
@@ -742,7 +744,14 @@ export function AgentChat({
   });
   // Find searches the mirror, so while it is open the mirror is WHOLE and the card stands down —
   // otherwise a hit inside the reply would be unfindable in the one surface find can highlight.
-  const clippedReply = placement?.fit === "clipped" && !findOpen ? latestReply : null;
+  const clippedReply =
+    prefs.expandClippedReply && placement?.fit === "clipped" && !findOpen ? latestReply : null;
+  const speech = useDeviceSpeech(locale);
+  const speechChunks = useMemo(
+    () =>
+      latestReply && replyIsOnMirror(display, latestReply) ? replySpeechChunks(latestReply) : [],
+    [display, latestReply],
+  );
   // Collapsing the card is a judgement about ONE message ("show me the raw rows instead"), so it is
   // remembered by uuid: a new reply arrives expanded without an effect to reset anything.
   const [collapsedReply, setCollapsedReply] = useState<string | null>(null);
@@ -2125,6 +2134,14 @@ export function AgentChat({
           onClosed={(id) => (id === paneId ? onBack() : revalidator.revalidate())}
           onFind={display ? openFind : undefined}
           onHistory={historyAvailable ? () => navigate(historyPath(paneId, scope)) : undefined}
+          onReadReply={
+            speech.supported && speechChunks.length > 0
+              ? speech.speaking
+                ? speech.stop
+                : () => speech.speak(speechChunks)
+              : undefined
+          }
+          readingReply={speech.speaking}
           // ZEN'S ONE ENTRY POINT, and the absence of this callback IS the gate — the sheet hides a
           // row it was given nothing for, exactly as it does for find and history. Gated twice: the
           // Settings toggle decides whether this phone offers zen at all, and `display` keeps it off

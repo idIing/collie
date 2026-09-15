@@ -277,6 +277,8 @@ export const ko: Dictionary = {
   "chat.strips.show.panes": "창 표시. {panes} 숨김 상태.",
   "chat.find.label": "출력에서 검색",
   "chat.history.label": "대화 기록",
+  "chat.speech.readReply": "최신 답변 읽기",
+  "chat.speech.stop": "읽기 중지",
   "chat.paneMenu.aria": "창 작업",
   "chat.header.openOverviewAria": "{workspace} 개요 열기{status}",
   "chat.header.statusAria": " — {label}",

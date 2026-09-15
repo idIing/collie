@@ -279,6 +279,8 @@ export const ja: Dictionary = {
   "chat.strips.show.panes": "ペインを表示（非表示: {panes}）",
   "chat.find.label": "出力内を検索",
   "chat.history.label": "会話履歴",
+  "chat.speech.readReply": "最新の回答を読み上げる",
+  "chat.speech.stop": "読み上げを停止",
   "chat.paneMenu.aria": "ペイン操作",
   "chat.header.openOverviewAria": "{workspace} の概要を開く{status}",
   "chat.header.statusAria": "（{label}）",

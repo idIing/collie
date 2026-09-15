@@ -266,6 +266,8 @@ export const zh: Dictionary = {
   "chat.strips.show.panes": "显示窗格，已隐藏 {panes}。",
   "chat.find.label": "在输出中查找",
   "chat.history.label": "对话历史",
+  "chat.speech.readReply": "朗读最新回复",
+  "chat.speech.stop": "停止朗读",
   "chat.paneMenu.aria": "窗格菜单",
   "chat.header.openOverviewAria": "打开 {workspace} 概览{status}",
   "chat.header.statusAria": "（{label}）",

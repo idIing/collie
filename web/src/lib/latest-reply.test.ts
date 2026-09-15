@@ -1,4 +1,11 @@
-import { fold, locateReply, newestReply, PROBE_CHARS, replyProse } from "./latest-reply";
+import {
+  fold,
+  locateReply,
+  newestReply,
+  PROBE_CHARS,
+  replyIsOnMirror,
+  replyProse,
+} from "./latest-reply";
 import type { TranscriptEntry, TranscriptPart } from "./types";
 
 // The predicates behind "the mirror is only showing the end of this reply". The cases that matter are
@@ -146,6 +153,26 @@ describe("locateReply", () => {
   it("does not let SGR parameters leak into the comparison", () => {
     const coloured = `\x1b[38;5;213m${REPLY}\x1b[0m`;
     expect(fitOf(coloured, reply)).toBe("whole");
+  });
+});
+
+describe("replyIsOnMirror", () => {
+  it("matches a short reply only when that reply is actually present", () => {
+    const reply = turn("assistant", "Finished cleanly.");
+    expect(replyIsOnMirror("⏺ Finished cleanly.", reply)).toBe(true);
+    expect(replyIsOnMirror("⏺ A newer answer is streaming now.", reply)).toBe(false);
+  });
+
+  it("uses the rendered tail for a clipped long reply", () => {
+    const reply = turn("assistant", REPLY);
+    const clipped = rendered(REPLY).split("\n").slice(4).join("\n");
+    expect(replyIsOnMirror(clipped, reply)).toBe(true);
+  });
+
+  it("refuses a clamped journal part", () => {
+    expect(replyIsOnMirror(rendered(REPLY), turn("assistant", REPLY, { truncated: true }))).toBe(
+      false,
+    );
   });
 });
 

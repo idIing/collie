@@ -302,6 +302,8 @@ export const en = {
   "chat.strips.show.panes": "Show panes. {panes} hidden.",
   "chat.find.label": "Find in output",
   "chat.history.label": "Conversation history",
+  "chat.speech.readReply": "Read latest reply",
+  "chat.speech.stop": "Stop reading",
   // The header's ⋮ — the glyph names nothing, so the accessible name has to say what it OPENS.
   "chat.paneMenu.aria": "Pane actions",
   "chat.header.openOverviewAria": "Open {workspace} overview{status}",
