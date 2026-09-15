@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fold, locateReply, newestReply, PROBE_CHARS, replyProse, sourceOrderRows } from "./latest-reply";
+import {
+  fold,
+  locateReply,
+  newestReply,
+  PROBE_CHARS,
+  replyIsOnMirror,
+  replyProse,
+  sourceOrderRows,
+} from "./latest-reply";
 import { fullSpelling, skimSpelling } from "@/lib/stretch";
 import type { TranscriptEntry, TranscriptPart } from "./types";
 
@@ -157,6 +165,26 @@ describe("locateReply", () => {
   it("does not let SGR parameters leak into the comparison", () => {
     const coloured = `\x1b[38;5;213m${REPLY}\x1b[0m`;
     expect(fitOf(coloured, reply)).toBe("whole");
+  });
+});
+
+describe("replyIsOnMirror", () => {
+  it("matches a short reply only when that reply is actually present", () => {
+    const reply = turn("assistant", "Finished cleanly.");
+    expect(replyIsOnMirror("⏺ Finished cleanly.", reply)).toBe(true);
+    expect(replyIsOnMirror("⏺ A newer answer is streaming now.", reply)).toBe(false);
+  });
+
+  it("uses the rendered tail for a clipped long reply", () => {
+    const reply = turn("assistant", REPLY);
+    const clipped = rendered(REPLY).split("\n").slice(4).join("\n");
+    expect(replyIsOnMirror(clipped, reply)).toBe(true);
+  });
+
+  it("refuses a clamped journal part", () => {
+    expect(replyIsOnMirror(rendered(REPLY), turn("assistant", REPLY, { truncated: true }))).toBe(
+      false,
+    );
   });
 });
 

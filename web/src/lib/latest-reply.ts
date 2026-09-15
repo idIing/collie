@@ -170,6 +170,22 @@ export function newestReply(entries: TranscriptEntry[]): TranscriptEntry | null 
   return null;
 }
 
+/**
+ * Whether this journal turn is still the reply on the terminal mirror.
+ *
+ * Long answers use the same tail identity probe as `locateReply`; short answers use their whole
+ * folded text, because `locateReply` quite reasonably calls every short turn `whole` without doing
+ * placement work. TTS needs the stronger answer: never offer to read yesterday's short "Done" while
+ * a different reply is on screen.
+ */
+export function replyIsOnMirror(mirrorText: string, entry: TranscriptEntry): boolean {
+  if (proseTruncated(entry)) return false;
+  const reply = fold(replyProse(entry));
+  if (reply === "") return false;
+  const identity = reply.length < PROBE_CHARS * 2 ? reply : reply.slice(-PROBE_CHARS);
+  return fold(plain(mirrorText)).includes(identity);
+}
+
 /** Where a turn sits on the mirror, and — when it is clipped — which row it ends on. */
 export interface ReplyPlacement {
   fit: ReplyFit;

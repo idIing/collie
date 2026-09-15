@@ -477,6 +477,8 @@ export const fr: Dictionary = {
   "chat.copyOutput.label": "Copier la sortie",
   "chat.copyOutput.done": "Sortie copiée dans le presse-papiers",
   "chat.copyOutput.failed": "Impossible de copier la sortie",
+  "chat.speech.readReply": "Lire la dernière réponse",
+  "chat.speech.stop": "Arrêter la lecture",
   "chat.paneMenu.aria": "Actions du volet",
   "chat.header.openOverviewAria": "Ouvrir l'aperçu de {workspace}{status}",
   "chat.progress.aria": "Progression",

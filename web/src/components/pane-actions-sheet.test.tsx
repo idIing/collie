@@ -273,9 +273,9 @@ describe("PaneActionsSheet — a pane on an unreachable machine", () => {
   });
 });
 
-// The two READ rows the pane header hands this sheet when the ⋮ opens it. The pane STRIP passes
-// neither, and that asymmetry is the design: find searches the buffer the open pane already fetched,
-// and a strip pill can open this sheet on a pane whose output was never loaded.
+// The optional READ rows the pane header hands this sheet when the ⋮ opens it. The pane STRIP passes
+// none, and that asymmetry is the design: these rows act on the open pane's loaded output/session,
+// while a strip pill can open this sheet on a pane whose output was never loaded.
 describe("PaneActionsSheet — the read rows", () => {
   it("shows neither row when the caller offers neither (the pane strip's case)", () => {
     renderSheet();
@@ -288,6 +288,28 @@ describe("PaneActionsSheet — the read rows", () => {
     renderSheet({ onFind: vi.fn() });
     expect(screen.getByRole("button", { name: "Find in output" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Conversation history" })).toBeNull();
+  });
+
+  it("offers device speech only when the caller has a finished reply, then becomes Stop", () => {
+    const { rerender } = render(<PaneActionsSheet {...renderProps({ onReadReply: vi.fn() })} />);
+    expect(screen.getByRole("button", { name: "Read latest reply" })).toBeInTheDocument();
+
+    rerender(
+      <PaneActionsSheet
+        {...renderProps({ onReadReply: vi.fn(), readingReply: true })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Stop reading" })).toBeInTheDocument();
+  });
+
+  it("closes the sheet before starting device speech", async () => {
+    const user = userEvent.setup();
+    const onReadReply = vi.fn();
+    const props = renderSheet({ onReadReply });
+    await user.click(screen.getByRole("button", { name: "Read latest reply" }));
+    expect(vi.mocked(props.onClose).mock.invocationCallOrder[0]!).toBeLessThan(
+      onReadReply.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("closes the sheet BEFORE it acts, so the surface the row leads to arrives alone", async () => {
@@ -351,8 +373,15 @@ describe("PaneActionsSheet — the read rows", () => {
   // slides up under the finger. Every row in here states the floor — `min-h-11` around a 20px
   // `text-sm` line, because `px-3 py-2.5` alone drew 40.
   it("gives every row a 44px hit box", () => {
-    renderSheet({ onFind: vi.fn(), onHistory: vi.fn(), onCopyOutput: vi.fn() });
-    for (const name of ["Find in output", "Conversation history", "Copy output", "Rename", "Close pane"]) {
+    renderSheet({ onFind: vi.fn(), onHistory: vi.fn(), onCopyOutput: vi.fn(), onReadReply: vi.fn() });
+    for (const name of [
+      "Find in output",
+      "Conversation history",
+      "Copy output",
+      "Read latest reply",
+      "Rename",
+      "Close pane",
+    ]) {
       expect(screen.getByRole("button", { name })).toHaveClass("min-h-11");
     }
   });

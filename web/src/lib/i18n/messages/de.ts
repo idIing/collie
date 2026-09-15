@@ -545,6 +545,8 @@ export const de: Dictionary = {
   "chat.copyOutput.label": "Ausgabe kopieren",
   "chat.copyOutput.done": "Ausgabe in die Zwischenablage kopiert",
   "chat.copyOutput.failed": "Ausgabe konnte nicht kopiert werden",
+  "chat.speech.readReply": "Neueste Antwort vorlesen",
+  "chat.speech.stop": "Vorlesen stoppen",
   "chat.paneMenu.aria": "Pane-Aktionen",
   "chat.header.openOverviewAria": "Übersicht für {workspace} öffnen{status}",
   "chat.progress.aria": "Fortschritt",

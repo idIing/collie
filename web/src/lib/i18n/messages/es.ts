@@ -543,6 +543,8 @@ export const es: Dictionary = {
   "chat.copyOutput.label": "Copiar salida",
   "chat.copyOutput.done": "Salida copiada al portapapeles",
   "chat.copyOutput.failed": "No se pudo copiar la salida",
+  "chat.speech.readReply": "Leer la última respuesta",
+  "chat.speech.stop": "Detener lectura",
   "chat.paneMenu.aria": "Acciones del panel",
   "chat.header.openOverviewAria": "Abrir vista general de {workspace}{status}",
   "chat.progress.aria": "Progreso",

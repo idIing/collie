@@ -3412,6 +3412,88 @@ describe("AgentChat — full latest reply", () => {
     expect(screen.getAllByText(/Short answer/).length).toBe(1); // the mirror's copy, and only it
   });
 
+  it("reads the matched finished reply with the device voice and offers Stop", async () => {
+    class FakeUtterance extends EventTarget {
+      readonly text: string;
+      lang = "";
+      constructor(text: string) {
+        super();
+        this.text = text;
+      }
+    }
+    const utterances: FakeUtterance[] = [];
+    const synthesis = {
+      cancel: vi.fn(),
+      speak: vi.fn((utterance: FakeUtterance) => utterances.push(utterance)),
+    };
+    const originalSynthesis = window.speechSynthesis;
+    const originalUtterance = window.SpeechSynthesisUtterance;
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synthesis });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: FakeUtterance,
+    });
+
+    try {
+      const user = userEvent.setup();
+      withJournalReply(REPLY);
+      renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: SCREEN });
+      await waitFor(() => expect(card()).toBeInTheDocument());
+
+      await openPaneMenu(user);
+      await user.click(screen.getByRole("button", { name: "Read latest reply" }));
+      expect(utterances[0]?.text).toContain("Short answer: approve-only");
+      expect(utterances[0]?.text).not.toContain("**");
+
+      await openPaneMenu(user);
+      await user.click(screen.getByRole("button", { name: "Stop reading" }));
+      expect(synthesis.cancel).toHaveBeenCalledTimes(2); // replace anything active, then stop
+    } finally {
+      Object.defineProperty(window, "speechSynthesis", {
+        configurable: true,
+        value: originalSynthesis,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        configurable: true,
+        value: originalUtterance,
+      });
+    }
+  });
+
+  it("offers the device voice from Chat, the default body, as well as from the terminal", async () => {
+    const synthesis = { cancel: vi.fn(), speak: vi.fn() };
+    const originalSynthesis = window.speechSynthesis;
+    const originalUtterance = window.SpeechSynthesisUtterance;
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synthesis });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: class extends EventTarget {},
+    });
+
+    try {
+      localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "chat" }));
+      const user = userEvent.setup();
+      withJournalReply(REPLY);
+      const { container } = renderChat({ agent: sessionAgent(), agents: [sessionAgent()], text: SCREEN });
+      await waitFor(() => expect(container.querySelector('[data-slot="session-stream"]')).not.toBeNull());
+
+      await waitFor(async () => {
+        await openPaneMenu(user);
+        expect(screen.getByRole("button", { name: "Read latest reply" })).toBeInTheDocument();
+      });
+    } finally {
+      localStorage.removeItem("collie:dash-prefs:v1");
+      Object.defineProperty(window, "speechSynthesis", {
+        configurable: true,
+        value: originalSynthesis,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        configurable: true,
+        value: originalUtterance,
+      });
+    }
+  });
+
   // The pref is the whole opt-out: off, the pane is exactly what it was before this existed — and it
   // costs no journal read either, which is the reason it is a pref rather than always-on.
   it("reads no journal at all once the operator turns it off", async () => {
