@@ -66,6 +66,19 @@ export function speakTableRow(header: string[], cells: string[]): RowPiece[] {
   return pieces;
 }
 
+/** The prose of a quote's own blocks, nested quotes and list items included; code and tables skipped. */
+function quoteText(blocks: MdBlock[]): string {
+  return blocks
+    .map((block) => {
+      if (block.kind === "heading" || block.kind === "paragraph") return sentence(spanText(block.spans));
+      if (block.kind === "quote") return quoteText(block.blocks);
+      if (block.kind === "list") return block.items.map((item) => sentence(spanText(item))).join(" ");
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
 /** End every spoken unit with a stop so the engine pauses between blocks, rows and items. */
 function sentence(text: string): string {
   const t = text.trim();
@@ -89,8 +102,11 @@ export function buildCarScript(entry: TranscriptEntry): CarScript {
     switch (block.kind) {
       case "heading":
       case "paragraph":
-      case "quote":
         say(sentence(spanText(block.spans)), { block: b });
+        return;
+      case "quote":
+        // A quote holds blocks of its own; it is said as one segment, so the whole quote is marked.
+        say(sentence(quoteText(block.blocks)), { block: b });
         return;
       case "list":
         // One segment per item, so the highlight steps down the list item by item.

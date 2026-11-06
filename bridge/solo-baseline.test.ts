@@ -936,6 +936,9 @@ describe("solo zero-tax — routes", () => {
       // The trouble tally (M86 spec 05): the phone's one count when a trouble card showed. Solo for the
       // same reason: the bridge the phone talks to counts it under its own install.
       "/api/telemetry/trouble",
+      // Car mode's speech (bridge/tts/): a SOLO route that legitimately extends this list, named here
+      // rather than exempted. Read-gated, lead-local, a 404 unless COLLIE_TTS_URL names a local engine.
+      "/api/tts",
       // Starting an update from the phone (M15/05) — a SOLO route that legitimately extends this
       // list, named here rather than exempted. Write-gated through the same closure a send rides,
       // and it registers no crew sibling: a peer is levelled from the lead's terminal
@@ -1310,6 +1313,9 @@ const STATE_DIR_ENTRIES = [
   // last day sent, the phone's switch and the trouble tally (M86 spec 05). A NEW file; the ID and the
   // tally are deleted the moment the ping is off, and an older build ignores the file.
   "telemetry.json",
+  // Car mode's pronunciation lexicon, `{ "term": "ipa" }`. Read, never written: the operator (or a
+  // script of theirs) keeps it. Absent is an empty lexicon.
+  "tts-lexicon.json",
   // The detached updater's own stdout and stderr (#283), with the run before it kept beside it as
   // `update-runner.log.1`. Absent until the first update started from the phone: the bridge opens it
   // only to hand the descriptor to the runner it spawns.

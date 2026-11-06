@@ -20,4 +20,10 @@ describe("car script", () => {
     expect(segmentAt(s, s.text.indexOf("Intro"))?.target).toEqual({ block: 0 });
     expect(segmentAt(s, s.text.indexOf("0.3"))?.target).toEqual({ block: 1, row: 0, col: 1 });
   });
+
+  test("a quote is one segment holding its nested prose", () => {
+    const s = buildCarScript(reply("> First line\n>\n> > Nested"));
+    expect(s.text).toBe("First line. Nested.");
+    expect(s.segments).toEqual([{ start: 0, end: s.text.length, target: { block: 0 } }]);
+  });
 });

@@ -39,7 +39,7 @@ function silenceUrl(): string {
   return silence;
 }
 
-const autoplayKey = (paneKey: string) => `collie.car.autoplay:${paneKey}`;
+const autoplayKey = (paneKey: string) => `collie:car-autoplay:v1:${paneKey}`;
 
 function readAutoplay(paneKey: string): boolean {
   try {

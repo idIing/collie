@@ -1,5 +1,5 @@
 import { replyProse } from "./latest-reply";
-import { parseMarkdown, type MdSpan } from "./markdown";
+import { parseMarkdown, type MdBlock, type MdSpan } from "./markdown";
 import type { TranscriptEntry } from "./types";
 
 // Speech follows the transcript renderer's Markdown grammar instead of trying to clean source with
@@ -25,9 +25,18 @@ function spanText(spans: MdSpan[]): string {
  * keeps one item per chunk so its pauses survive after the bullets are removed.
  */
 export function replySpeechChunks(entry: TranscriptEntry): string[] {
+  return blockChunks(parseMarkdown(replyProse(entry)));
+}
+
+/** A quote holds blocks of its own (nested quotes included), so its prose is read the same way. */
+function blockChunks(blocks: MdBlock[]): string[] {
   const chunks: string[] = [];
-  for (const block of parseMarkdown(replyProse(entry))) {
+  for (const block of blocks) {
     if (block.kind === "code" || block.kind === "table" || block.kind === "rule") continue;
+    if (block.kind === "quote") {
+      chunks.push(...blockChunks(block.blocks));
+      continue;
+    }
     if (block.kind === "list") {
       for (const item of block.items) {
         const text = spanText(item);

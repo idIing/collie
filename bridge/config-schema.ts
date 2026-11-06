@@ -39,7 +39,8 @@ export type ConfigSection =
   | "standby"
   | "update"
   | "serve"
-  | "stt";
+  | "stt"
+  | "tts";
 
 /** The sections in file order — the order `config init` writes and `config show` prints. */
 export const CONFIG_SECTIONS: readonly ConfigSection[] = [
@@ -55,6 +56,7 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
   "update",
   "serve",
   "stt",
+  "tts",
 ];
 
 /** One line per section, printed as the banner comment `config init` writes above it. */
@@ -71,6 +73,7 @@ export const SECTION_DOC = {
   update: "Where releases come from, how many old versions stay, and the health budget.",
   serve: "The managed front door: whether Collie publishes it, and on what.",
   stt: "Speech-to-text, which is absent until `collie stt setup` writes it.",
+  tts: "Car mode's text-to-speech (experimental): a local engine, off until a URL names one.",
 } satisfies Record<ConfigSection, string>;
 
 /**
@@ -965,6 +968,24 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     kind: "string",
     default: "",
     doc: "The command the local-cli provider runs, an absolute path or a name on PATH.",
+  },
+
+  // ── tts ────────────────────────────────────────────────────────────────────
+  {
+    key: "tts_url",
+    env: "COLLIE_TTS_URL",
+    section: "tts",
+    kind: "string",
+    default: "",
+    doc: "A local Kokoro-FastAPI base URL, no trailing slash. Empty leaves car mode's speech off.",
+  },
+  {
+    key: "tts_voice",
+    env: "COLLIE_TTS_VOICE",
+    section: "tts",
+    kind: "string",
+    default: "af_heart",
+    doc: "The Kokoro voice car mode reads with.",
   },
   {
     key: "telemetry",
