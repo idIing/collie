@@ -585,6 +585,7 @@ export const en = {
   "chat.copyOutput.done": "Copied output to clipboard",
   "chat.copyOutput.failed": "Couldn't copy output",
   "chat.speech.readReply": "Read latest reply",
+  "chat.car.enter": "Car mode",
   "chat.speech.stop": "Stop reading",
   // The header's ⋮ — the glyph names nothing, so the accessible name has to say what it OPENS.
   "chat.paneMenu.aria": "Pane actions",

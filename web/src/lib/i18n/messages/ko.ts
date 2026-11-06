@@ -541,6 +541,7 @@ export const ko: Dictionary = {
   "chat.copyOutput.done": "출력을 클립보드에 복사함",
   "chat.copyOutput.failed": "출력을 복사할 수 없음",
   "chat.speech.readReply": "최신 답변 읽기",
+  "chat.car.enter": "차량 모드",
   "chat.speech.stop": "읽기 중지",
   "chat.paneMenu.aria": "창 작업",
   "chat.header.openOverviewAria": "{workspace} 개요 열기{status}",

@@ -530,6 +530,7 @@ export const zh: Dictionary = {
   "chat.copyOutput.done": "已将输出复制到剪贴板",
   "chat.copyOutput.failed": "无法复制输出",
   "chat.speech.readReply": "朗读最新回复",
+  "chat.car.enter": "车载模式",
   "chat.speech.stop": "停止朗读",
   "chat.paneMenu.aria": "窗格菜单",
   "chat.header.openOverviewAria": "打开 {workspace} 概览{status}",

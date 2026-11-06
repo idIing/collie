@@ -486,6 +486,7 @@ export const ru: Dictionary = {
   "chat.copyOutput.done": "Вывод скопирован в буфер обмена",
   "chat.copyOutput.failed": "Не удалось скопировать вывод",
   "chat.speech.readReply": "Прочитать последний ответ",
+  "chat.car.enter": "Режим авто",
   "chat.speech.stop": "Остановить чтение",
   "chat.paneMenu.aria": "Действия с панелью",
   "chat.header.openOverviewAria": "Открыть обзор {workspace}{status}",

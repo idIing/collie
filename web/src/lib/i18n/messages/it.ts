@@ -478,6 +478,7 @@ export const it: Dictionary = {
   "chat.copyOutput.done": "Output copiato negli appunti",
   "chat.copyOutput.failed": "Impossibile copiare l'output",
   "chat.speech.readReply": "Leggi l'ultima risposta",
+  "chat.car.enter": "Modalità auto",
   "chat.speech.stop": "Interrompi la lettura",
   "chat.paneMenu.aria": "Azioni del riquadro",
   "chat.header.openOverviewAria": "Apri panoramica di {workspace}{status}",

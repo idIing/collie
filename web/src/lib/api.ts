@@ -14,7 +14,7 @@ import {
 import { noteSnapshotTaken } from "./snapshot-clock";
 import { markDead as markPaneDead, markLive as markPaneLive } from "./liveness";
 import { abortSignalAfter, abortSignalAny } from "./env";
-import { asJsonObject, asJsonString, parseJsonObject, type JsonObject } from "./json";
+import { asJsonNumber, asJsonObject, asJsonString, parseJsonObject, type JsonObject } from "./json";
 import { readHeldCancelAnswer, readSendReceipts, readSendReply, type SendReply } from "./send-protocol";
 import { readReportContext, type ReportContext } from "./report/context";
 import type { TroubleSignal } from "./report/signal";
@@ -2877,4 +2877,42 @@ export async function fetchSttModel(sha256: string, signal?: AbortSignal): Promi
     throw new ApiError(`${path} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
   }
   return res;
+}
+
+/** One reply rendered by the bridge's local speech engine (car mode, experimental). */
+export interface SpeechRender {
+  audio: Blob;
+  words: import("./car-clock").CarWord[];
+}
+
+/**
+ * Ask the bridge to speak `text` (a car script). Throws on any refusal: car mode shows one plain
+ * sentence for every failure, so the status does not need to come back as a value the way STT's does.
+ */
+export async function synthesizeSpeech(text: string, signal?: AbortSignal): Promise<SpeechRender> {
+  const res = await apiFetch("/api/tts", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+    headers: { "content-type": "application/json", [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() },
+    signal: withTimeout(signal, 120_000),
+  });
+  if (!res.ok) throw new Error(`tts ${res.status}`);
+  const body = parseJsonObject(await res.text());
+  const audio = asJsonString(body?.audio);
+  const mime = asJsonString(body?.mime) ?? "audio/mpeg";
+  if (audio === undefined) throw new Error("tts: no audio");
+  const words: SpeechRender["words"] = [];
+  const list = body?.words;
+  for (const raw of Array.isArray(list) ? list : []) {
+    const w = asJsonObject(raw);
+    const start = asJsonNumber(w?.start);
+    const end = asJsonNumber(w?.end);
+    const offset = asJsonNumber(w?.offset);
+    const length = asJsonNumber(w?.length);
+    if (start !== undefined && end !== undefined && offset !== undefined && length !== undefined) {
+      words.push({ start, end, offset, length });
+    }
+  }
+  const bytes = Uint8Array.from(atob(audio), (c) => c.charCodeAt(0));
+  return { audio: new Blob([bytes], { type: mime }), words };
 }

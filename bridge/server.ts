@@ -216,6 +216,7 @@ import { selectHostFrom, type HostSelector } from "./crew/registry.ts";
 import { machineHost } from "./crew/machine-host.ts";
 import type { CrewHandler, CrewSurface } from "./crew/router.ts";
 import type { CrewTlsOptions } from "./crew/transport.ts";
+import { asTtsString, readTtsLexicon, synthesizeTts } from "./tts/index.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
 import type { SttProvider } from "./stt/provider.ts";
 import { createWhistleModelStore, type WhistleModelStore } from "./stt/whistle-model.ts";
@@ -364,9 +365,10 @@ const CONTENT_TYPES = new Map<string, string>([
 // React as text nodes, never markup, so terminal output can't inject. 'unsafe-inline' is allowed
 // for styles only (the toast library injects a <style> tag) — it can't execute code. `blob:` in
 // img-src is the composer's attachment thumbnail (ADR 0060): a blob URL is minted only by this
-// page's own script, from a file the operator picked, so it admits no new origin.
+// page's own script, from a file the operator picked, so it admits no new origin. `blob:` in
+// media-src is car mode's audio, for the same reason: the page mints it from bytes /api/tts returned.
 const CSP =
-  "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; " +
+  "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; " +
   "style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; " +
   "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'";
 
@@ -3870,6 +3872,44 @@ export function startServer(opts: {
         // provider's own words never reach the audit log.
         audit.record({ action: "stt", device: whois(req).device, detail: { ...attempt } });
         return secure(response);
+      }
+
+      // ── Text-to-speech for car mode (bridge/tts/, experimental) ──────────
+      // A READ: it speaks text this device can already read, and types into nothing. Lead-local and
+      // off unless COLLIE_TTS_URL names a local engine. The text and the audio are never audited.
+      if (pathname === "/api/tts" && req.method === "POST") {
+        const denied = guard(req, cfg, "read", pairingGate);
+        if (denied) return denied;
+        const baseUrl = process.env.COLLIE_TTS_URL;
+        if (!baseUrl) return text("text-to-speech is not configured", 404);
+        let parsed: JsonValue | undefined;
+        try {
+          // SAFETY: `JSON.parse` answers with a JSON value by construction; only `text` is read, checked.
+          parsed = JSON.parse(await req.text()) as JsonValue;
+        } catch {
+          parsed = undefined;
+        }
+        const textIn =
+          parsed !== null && parsed !== undefined && !Array.isArray(parsed) && parsed instanceof Object
+            ? (asTtsString(parsed.text) ?? "")
+            : "";
+        if (!textIn || textIn.length > 40_000) return text("text missing or too long", 400);
+        const lexicon = await readTtsLexicon(join(cfg.stateDir, "tts-lexicon.json"));
+        try {
+          const out = await synthesizeTts({
+            baseUrl,
+            text: textIn,
+            voice: process.env.COLLIE_TTS_VOICE ?? "af_heart",
+            lexicon,
+          });
+          audit.record({ action: "tts", device: whois(req).device, detail: { chars: textIn.length } });
+          return json(
+            { mime: out.mime, audio: Buffer.from(out.audio).toString("base64"), words: out.words },
+            req.headers.get("accept-encoding"),
+          );
+        } catch {
+          return text("the speech engine did not answer", 502);
+        }
       }
 
       // ── The Whistle model and the host engine (bridge/stt/whistle-http.ts, ADR 0096) ──────

@@ -544,6 +544,7 @@ export const es: Dictionary = {
   "chat.copyOutput.done": "Salida copiada al portapapeles",
   "chat.copyOutput.failed": "No se pudo copiar la salida",
   "chat.speech.readReply": "Leer la última respuesta",
+  "chat.car.enter": "Modo coche",
   "chat.speech.stop": "Detener lectura",
   "chat.paneMenu.aria": "Acciones del panel",
   "chat.header.openOverviewAria": "Abrir vista general de {workspace}{status}",

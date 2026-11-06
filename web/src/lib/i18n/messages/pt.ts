@@ -478,6 +478,7 @@ export const pt: Dictionary = {
   "chat.copyOutput.done": "Saída copiada para a área de transferência",
   "chat.copyOutput.failed": "Não foi possível copiar a saída",
   "chat.speech.readReply": "Ler a última resposta",
+  "chat.car.enter": "Modo carro",
   "chat.speech.stop": "Parar a leitura",
   "chat.paneMenu.aria": "Ações do painel",
   "chat.header.openOverviewAria": "Abrir visão geral de {workspace}{status}",

@@ -478,6 +478,7 @@ export const tr: Dictionary = {
   "chat.copyOutput.done": "Çıktı panoya kopyalandı",
   "chat.copyOutput.failed": "Çıktı kopyalanamadı",
   "chat.speech.readReply": "Son yanıtı oku",
+  "chat.car.enter": "Araç modu",
   "chat.speech.stop": "Okumayı durdur",
   "chat.paneMenu.aria": "Bölme eylemleri",
   "chat.header.openOverviewAria": "{workspace} genel bakışını aç{status}",

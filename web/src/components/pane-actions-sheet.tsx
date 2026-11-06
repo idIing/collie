@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bug, Copy, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, Square, SquareTerminal, Volume2, XCircle } from "lucide-react";
+import { Bug, Car, Copy, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, Square, SquareTerminal, Volume2, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { WalkyIcon, WalkyOffIcon } from "@/components/walky-icon";
@@ -74,6 +74,8 @@ interface PaneActionsSheetProps {
   onReadReply?: () => void;
   /** The read-reply action is currently speaking, so its row becomes the stop control. */
   readingReply?: boolean;
+  /** Enter car mode on this pane (experimental). Absence is the gate, as for the read rows. */
+  onCarMode?: () => void;
   /** Open this pane's own settings — today one switch, the prompt-cache warning (ADR 0042).
    *
    *  It is a read in the sense the other optional rows are: it changes a preference on this collie
@@ -187,6 +189,7 @@ export function PaneActionsSheet({
   onCopyOutput,
   onReadReply,
   readingReply = false,
+  onCarMode,
   onSettings,
   onReport,
   onMessages,
@@ -449,6 +452,16 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onReadReply();
+              }}
+            />
+          )}
+          {onCarMode && (
+            <ActionRow
+              icon={<Car className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("chat.car.enter")}
+              onClick={() => {
+                onClose();
+                onCarMode();
               }}
             />
           )}

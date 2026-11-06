@@ -33,6 +33,7 @@ import { useHandover, useHeldBody } from "@/hooks/use-handover";
 import { useLatestReply } from "@/hooks/use-latest-reply";
 import { finishedTurnKey, useMirrorImages } from "@/hooks/use-mirror-images";
 import { useDeviceSpeech } from "@/hooks/use-device-speech";
+import { CarView } from "@/components/car-view";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
@@ -1327,6 +1328,7 @@ export function AgentChat({
   const clippedReply =
     prefs.expandClippedReply && placement?.fit === "clipped" && !findOpen ? latestReply : null;
   const speech = useDeviceSpeech(locale);
+  const [car, setCar] = useState(false);
   const speechChunks = useMemo(
     () =>
       latestReply && replyIsOnMirror(display, latestReply) ? replySpeechChunks(latestReply) : [],
@@ -2517,6 +2519,14 @@ export function AgentChat({
               (mirror-space.ts), so a control painted in it would have no ground at all (DESIGN.md
               §4). Full-round is allowed here because the box is square, which is what §3 reserves it
               for. */}
+          {car && (
+            <CarView
+              paneLabel={name || paneId}
+              paneKey={paneScopeKey(scope, paneId)}
+              reply={latestReply}
+              onExit={() => setCar(false)}
+            />
+          )}
           {zen && (
             <button
               type="button"
@@ -3556,6 +3566,10 @@ export function AgentChat({
               : undefined
           }
           readingReply={speech.speaking}
+          onCarMode={() => {
+            speech.stop();
+            setCar(true);
+          }}
           // ZEN'S ONE ENTRY POINT, and the absence of this callback IS the gate — the sheet hides a
           // row it was given nothing for, exactly as it does for find and history. Gated twice: the
           // Settings toggle decides whether this phone offers zen at all, and `display` keeps it off
