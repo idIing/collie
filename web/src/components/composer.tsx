@@ -140,6 +140,12 @@ export interface ComposerHandle {
    * until the person turns it off or the message leaves.
    */
   startMessage: (aim: WalkyAim) => void;
+  /**
+   * Send words spoken in car mode, down the same guarded path hands-free takes. Where hands-free
+   * would not send (a draft in the box, a password prompt, a locked or offline pane, an ask owning the
+   * keyboard), the words go into the draft instead and this answers false.
+   */
+  sendSpoken: (transcript: string) => Promise<boolean>;
 }
 
 interface ComposerProps {
@@ -1107,6 +1113,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
    *  • **The composer can't send at all** (the field is locked, the pane is offline, or a modal ask
    *    owns the keyboard). `send()` would refuse anyway; inserting keeps the words.
    */
+  /** Hands-free's guard without the hands-free switch: car mode's Send is the operator's own act. */
+  function maySendSpoken(): boolean {
+    const draftEmpty = inputValueRef.current.trim() === "" && attachmentsRef.current.length === 0;
+    return draftEmpty && noEchoRef.current === null && !starting && !locked && !offline && slot !== "answer";
+  }
+  // The handle outlives renders, so it reaches the CURRENT guard and send through this ref.
+  const sendSpokenRef = useRef<(transcript: string) => Promise<boolean>>(() => Promise.resolve(false));
+  sendSpokenRef.current = (transcript) => {
+    if (maySendSpoken()) return send(transcript, false);
+    insertTranscript(transcript);
+    return Promise.resolve(false);
+  };
+
   function acceptTranscript(transcript: string) {
     const draftEmpty = inputValueRef.current.trim() === "" && attachmentsRef.current.length === 0;
     const mayHandsFree =
@@ -1188,6 +1207,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         startMessage(aim);
         focusInputImmediately();
       },
+      sendSpoken: (transcript) => sendSpokenRef.current(transcript),
     }),
     [startMessage],
   );

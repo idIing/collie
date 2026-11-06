@@ -20,6 +20,17 @@ export type SttWorkerRequest =
       id: number;
       /** 16 kHz mono PCM in [-1, 1]. */
       pcm: Float32Array;
+    }
+  | {
+      /** Live transcription: append about a second of 16 kHz mono PCM to the open stream. */
+      type: "stream";
+      id: number;
+      pcm: Float32Array;
+    }
+  | {
+      /** End the open stream: its unconfirmed tail is committed and the next `stream` starts fresh. */
+      type: "stream-stop";
+      id: number;
     };
 
 /** Why the worker will not run the engine on this browser. Fixed for the browser, not the clip. */
@@ -69,6 +80,7 @@ export interface SttPageInbound {
   text?: string;
   language?: string;
   code?: string;
+  pending?: string;
 }
 
 /** Worker to page. */
@@ -77,4 +89,6 @@ export type SttWorkerReply =
   | { type: "unsupported"; reason: SttUnsupportedReason }
   | { type: "loaded"; id: number }
   | { type: "result"; id: number; text: string; language: string }
+  /** A stream step: `text` is the words this call COMMITTED (append them), `pending` the unconfirmed tail. */
+  | { type: "partial"; id: number; text: string; pending: string }
   | { type: "error"; id: number; code: SttWorkerErrorCode };

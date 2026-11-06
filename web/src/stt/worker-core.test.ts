@@ -45,7 +45,7 @@ function fakeNeedle(options: { loadRc?: number; answer?: string; tokens?: number
   const loadSizes: bigint[] = [];
   let top = 8;
   const engine: NeedleModule & { calls: string[]; freed: number[]; loadSizes: bigint[] } = {
-    HEAPU8: new Uint8Array(1 << 17),
+    HEAPU8: new Uint8Array(1 << 20),
     calls,
     freed,
     loadSizes,
@@ -69,6 +69,22 @@ function fakeNeedle(options: { loadRc?: number; answer?: string; tokens?: number
       engine.HEAPU8.set(json, out);
       engine.HEAPU8[out + json.length] = 0;
       return options.tokens ?? 3;
+    },
+    // A toy stream: each step commits one word and leaves one pending; stop commits the tail.
+    _needle_stream_transcribe_process(_pcm, samples, _language, _keywords, out) {
+      calls.push(`stream:${String(samples)}`);
+      const step = calls.filter((c) => c.startsWith("stream:")).length;
+      const json = new TextEncoder().encode(`{"text":"w${String(step)} ","pending":" p${String(step)}"}`);
+      engine.HEAPU8.set(json, out);
+      engine.HEAPU8[out + json.length] = 0;
+      return 1;
+    },
+    _needle_stream_transcribe_stop(out) {
+      calls.push("stream-stop");
+      const json = new TextEncoder().encode('{"text":"tail","pending":""}');
+      engine.HEAPU8.set(json, out);
+      engine.HEAPU8[out + json.length] = 0;
+      return 1;
     },
   };
   return engine;
@@ -430,5 +446,45 @@ describe("readTranscript", () => {
   it("is null for JSON without a text string, and defaults a missing language", () => {
     expect(readTranscript(encode('{"txt":"hi"}'), 4, 60)).toBeNull();
     expect(readTranscript(encode('{"text":"hi"}'), 4, 60)).toEqual({ text: "hi", language: "" });
+  });
+});
+
+describe("stream", () => {
+  async function loaded(engine: ReturnType<typeof fakeNeedle>) {
+    const h = harness({ createNeedle: () => Promise.resolve(engine) });
+    const core = await booted(h);
+    core.receive({ type: "load", id: 1, wasm: h.wasm, model: h.model });
+    await core.idle();
+    return { h, core };
+  }
+
+  it("posts each step's committed words and pending tail, then the tail on stop, and frees what it took", async () => {
+    const engine = fakeNeedle();
+    const { h, core } = await loaded(engine);
+    const freedBefore = engine.freed.length;
+    core.receive({ type: "stream", id: 2, pcm: new Float32Array(1600) });
+    core.receive({ type: "stream", id: 3, pcm: new Float32Array(1600) });
+    core.receive({ type: "stream-stop", id: 4 });
+    await core.idle();
+    expect(h.posts.slice(-3)).toEqual([
+      { type: "partial", id: 2, text: "w1", pending: "p1" },
+      { type: "partial", id: 3, text: "w2", pending: "p2" },
+      { type: "partial", id: 4, text: "tail", pending: "" },
+    ]);
+    // Two steps free their pcm and out buffers; the stop frees only its out buffer.
+    expect(engine.freed.length - freedBefore).toBe(5);
+  });
+
+  it("answers not-loaded before a load, and bad-request for a step without pcm", async () => {
+    const h = harness();
+    const core = await booted(h);
+    core.receive({ type: "stream", id: 1, pcm: new Float32Array(16) });
+    await core.idle();
+    expect(h.posts.at(-1)).toEqual({ type: "error", id: 1, code: "not-loaded" });
+    const engine = fakeNeedle();
+    const live = await loaded(engine);
+    live.core.receive(raw({ type: "stream", id: 9 }));
+    await live.core.idle();
+    expect(live.h.posts.at(-1)).toEqual({ type: "error", id: 9, code: "bad-request" });
   });
 });

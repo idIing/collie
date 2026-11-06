@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, RotateCcw, RotateCw, X } from "lucide-react";
+import { Mic, Pause, Play, RotateCcw, RotateCw, Send, X } from "lucide-react";
 
 import { synthesizeSpeech } from "@/lib/api";
 import { buildCarScript, segmentAt, spanText, type CarScript, type CarTarget } from "@/lib/car-script";
 import { CAR_SPEEDS, SEEK_STEP_S, snapSeek, wordAt, type CarWord } from "@/lib/car-clock";
+import { useCarTalk } from "@/hooks/use-car-talk";
 import type { TranscriptEntry } from "@/lib/types";
 
 // CAR MODE: one pane, one reply, read aloud by the bridge's local engine.
@@ -21,6 +22,11 @@ interface CarViewProps {
   paneKey: string;
   reply: TranscriptEntry | null;
   onExit: () => void;
+  /**
+   * Send spoken words to this pane down the composer's guarded path. False means they went into the
+   * draft instead (lib: ComposerHandle.sendSpoken). Absent: no Talk button.
+   */
+  onSend?: (text: string) => Promise<boolean>;
 }
 
 interface Render {
@@ -55,7 +61,7 @@ function fmt(s: number): string {
   return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 }
 
-export function CarView({ paneLabel, paneKey, reply, onExit }: CarViewProps) {
+export function CarView({ paneLabel, paneKey, reply, onExit, onSend }: CarViewProps) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [render, setRender] = useState<Render | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,6 +74,28 @@ export function CarView({ paneLabel, paneKey, reply, onExit }: CarViewProps) {
   const unlocked = useRef(false);
 
   const ready = reply !== null && !reply.partial;
+
+  // ── Talk: live words on the phone's engine; Send sends, or quiet does when Autoplay is on ─────
+  const [talkNote, setTalkNote] = useState<string | null>(null);
+  const sendTalk = useRef<() => Promise<void>>(async () => {});
+  const talk = useCarTalk({ onSilence: () => { if (autoplayRef.current) void sendTalk.current(); } });
+  const autoplayRef = useRef(autoplay);
+  autoplayRef.current = autoplay;
+  sendTalk.current = async () => {
+    const words = await talk.finish();
+    if (!words) {
+      setTalkNote("Didn't catch anything.");
+      return;
+    }
+    const sent = (await onSend?.(words)) ?? false;
+    setTalkNote(sent ? `Sent: ${words}` : "Not sent: the pane couldn't take it, so it's in the message box.");
+  };
+  const startTalk = useCallback(() => {
+    audio.current?.pause();
+    setTalkNote(null);
+    void talk.start();
+  }, [talk]);
+  const talking = talk.phase === "starting" || talk.phase === "listening" || talk.phase === "finishing";
 
   // ── Render: one request per reply, cached by uuid ───────────────────────
   const ensureRender = useCallback(async (): Promise<Render | null> => {
@@ -261,7 +289,21 @@ export function CarView({ paneLabel, paneKey, reply, onExit }: CarViewProps) {
       </header>
 
       <main className="flex min-h-0 flex-1 items-center overflow-hidden px-4" aria-live="off">
-        {error ? (
+        {talking || talk.phase === "error" ? (
+          <p className="text-4xl leading-snug font-semibold">
+            {talk.phase === "error" ? (
+              talk.error
+            ) : talk.committed || talk.pending ? (
+              <>
+                {talk.committed} <span className="opacity-55 italic">{talk.pending}</span>
+              </>
+            ) : (
+              <span className="opacity-55">{talk.phase === "starting" ? "Starting the mic…" : "Listening…"}</span>
+            )}
+          </p>
+        ) : talkNote ? (
+          <p className="text-3xl leading-snug font-semibold">{talkNote}</p>
+        ) : error ? (
           <p className="text-2xl font-semibold">{error}</p>
         ) : !reply ? (
           <p className="text-2xl text-muted-foreground">No reply in this pane yet.</p>
@@ -278,7 +320,39 @@ export function CarView({ paneLabel, paneKey, reply, onExit }: CarViewProps) {
         <p className="px-4 pb-1 text-base font-semibold">● New reply. Tap Play for the newest.</p>
       )}
 
-      <footer className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      {talking && (
+        <footer className="flex gap-3 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={() => talk.cancel()}
+            className="h-24 flex-1 rounded-2xl border-4 border-foreground text-2xl font-bold"
+          >
+            <X className="mr-2 inline size-8" />
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void sendTalk.current()}
+            disabled={talk.phase !== "listening"}
+            className="h-24 flex-[2] rounded-2xl bg-foreground text-2xl font-black text-background disabled:opacity-40"
+          >
+            <Send className="mr-2 inline size-8" />
+            {autoplay ? "Send (or pause 2s)" : "Send"}
+          </button>
+        </footer>
+      )}
+
+      <footer className={`px-4 pb-[max(1rem,env(safe-area-inset-bottom))] ${talking ? "hidden" : ""}`}>
+        {onSend && (
+          <button
+            type="button"
+            onClick={startTalk}
+            className="mb-3 flex h-20 w-full items-center justify-center gap-3 rounded-2xl border-4 border-foreground text-2xl font-black"
+          >
+            <Mic className="size-9" />
+            Talk
+          </button>
+        )}
         <input
           type="range"
           aria-label="Timeline"

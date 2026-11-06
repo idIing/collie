@@ -54,6 +54,15 @@ export interface NeedleModule {
     out: number,
     capacity: number,
   ) => number;
+  _needle_stream_transcribe_process: (
+    pcm: number,
+    samples: number,
+    language: number,
+    keywords: number,
+    out: number,
+    capacity: number,
+  ) => number;
+  _needle_stream_transcribe_stop: (out: number, capacity: number) => number;
 }
 
 export type CreateNeedle = (options: { wasmBinary: Uint8Array }) => Promise<NeedleModule>;
@@ -104,6 +113,17 @@ export function readTranscript(
   const text = asJsonString(answer?.text);
   if (text === undefined) return null;
   return { text: text.trim(), language: asJsonString(answer?.language) ?? "" };
+}
+
+/** A stream step's answer: the words this call committed, and the unconfirmed tail. */
+export function readStreamStep(heap: Uint8Array, ptr: number, capacity: number): { text: string; pending: string } | null {
+  const window = heap.subarray(ptr, ptr + capacity);
+  const end = window.indexOf(0);
+  if (end < 0) return null;
+  const answer = parseJsonObject(new TextDecoder().decode(window.subarray(0, end)));
+  const text = asJsonString(answer?.text);
+  if (text === undefined) return null;
+  return { text: text.trim(), pending: (asJsonString(answer?.pending) ?? "").trim() };
 }
 
 const OOM_MESSAGE = /\bOOM\b|out of memory|Cannot enlarge memory/i;
@@ -237,6 +257,48 @@ export function createWorkerCore(host: WorkerHost): WorkerCore {
     }
   }
 
+  /** One live step: feed `pcm` (or, with null, end the stream) and post what was committed. */
+  function stream(id: number, pcm: Float32Array | null): void {
+    const engine = needle;
+    if (engine === null) {
+      fail(id, "not-loaded");
+      return;
+    }
+    host.resetGrowFailed();
+    try {
+      const outPtr = engine._malloc(TRANSCRIPT_CAPACITY);
+      if (outPtr === 0) {
+        fail(id, "oom");
+        return;
+      }
+      engine.HEAPU8.fill(0, outPtr, outPtr + 1);
+      let rc: number;
+      if (pcm === null) {
+        rc = engine._needle_stream_transcribe_stop(outPtr, TRANSCRIPT_CAPACITY);
+      } else {
+        const pcmPtr = pcm.length > 0 ? engine._malloc(pcm.byteLength) : 0;
+        if (pcm.length > 0 && pcmPtr === 0) {
+          engine._free(outPtr);
+          fail(id, "oom");
+          return;
+        }
+        // HEAPU8 is read fresh at each use: a heap growth replaces the buffer under it.
+        if (pcmPtr !== 0) engine.HEAPU8.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), pcmPtr);
+        rc = engine._needle_stream_transcribe_process(pcmPtr, pcm.length, 0, 0, outPtr, TRANSCRIPT_CAPACITY);
+        if (pcmPtr !== 0) engine._free(pcmPtr);
+      }
+      const step = rc < 0 ? null : readStreamStep(engine.HEAPU8, outPtr, TRANSCRIPT_CAPACITY);
+      engine._free(outPtr);
+      if (step === null) {
+        fail(id, "transcribe-failed");
+        return;
+      }
+      host.post({ type: "partial", id, text: step.text, pending: step.pending });
+    } catch (error) {
+      failFromThrow(id, error, "transcribe-failed");
+    }
+  }
+
   async function handle(message: SttWorkerInbound | null): Promise<void> {
     // Optional chaining, not destructuring: a message of `undefined` must be dropped, not thrown on.
     const type = message?.type;
@@ -262,7 +324,18 @@ export function createWorkerCore(host: WorkerHost): WorkerCore {
         return;
       }
       transcribe(id, pcm);
+      return;
     }
+    if (type === "stream") {
+      const pcm = message?.pcm;
+      if (!(pcm instanceof Float32Array)) {
+        fail(id, "bad-request");
+        return;
+      }
+      stream(id, pcm);
+      return;
+    }
+    if (type === "stream-stop") stream(id, null);
   }
 
   return {

@@ -55,6 +55,9 @@ export type SttEngineOutcome =
   | { ok: true; text: string; language: string }
   | { ok: false; code: SttEngineErrorCode };
 
+/** One live step: the words newly committed (append them) and the unconfirmed tail. */
+export type SttStreamOutcome = { ok: true; text: string; pending: string } | { ok: false; code: SttEngineErrorCode };
+
 export type SttProbe =
   | { ok: true }
   | { ok: false; reason: SttUnsupportedReason | "crashed" | "disabled" | "aborted" };
@@ -87,6 +90,11 @@ export interface SttEngine {
   probe: () => Promise<SttProbe>;
   /** Transcribe 16 kHz mono PCM. The array's buffer is transferred, so it is detached on return. */
   transcribe: (pcm: Float32Array, options?: { signal?: AbortSignal }) => Promise<SttEngineOutcome>;
+  /**
+   * Live transcription. Feed about a second of 16 kHz PCM at a time; pass `null` to end the stream,
+   * which commits its tail. One step at a time: a step sent while another runs answers `busy`.
+   */
+  stream: (pcm: Float32Array | null) => Promise<SttStreamOutcome>;
   /** True once two crashes have switched the engine off for the page session. */
   disabled: () => boolean;
   /** Terminate the worker and stop listening. The engine can still start a new worker afterwards. */
@@ -153,6 +161,13 @@ function parseReply(inbound: SttPageInbound | null): SttWorkerReply | null {
       return id === undefined || text === undefined || language === undefined
         ? null
         : { type: "result", id, text, language };
+    }
+    case "partial": {
+      const text = asJsonString(inbound.text);
+      const pending = asJsonString(inbound.pending);
+      return id === undefined || text === undefined || pending === undefined
+        ? null
+        : { type: "partial", id, text, pending };
     }
     case "error": {
       const code = asJsonString(inbound.code);
@@ -329,7 +344,7 @@ export function createSttEngine(options: SttEngineOptions): SttEngine {
 
   /** The end of a request as an outcome, or `null` when the worker answered something to go on with.
    *  Any worker error recycles the worker: after an engine error its module is gone or unknown. */
-  function endOf(settled: Settle): SttEngineOutcome | null {
+  function endOf(settled: Settle): { ok: false; code: SttEngineErrorCode } | null {
     if (settled.kind === "end") return { ok: false, code: settled.code };
     if (settled.reply.type === "error") {
       kill(null);
@@ -338,7 +353,8 @@ export function createSttEngine(options: SttEngineOptions): SttEngine {
     return null;
   }
 
-  async function run(pcm: Float32Array, signal: AbortSignal | undefined): Promise<SttEngineOutcome> {
+  /** A live, loaded worker, or the failure that stopped one. Shared by the clip and the stream. */
+  async function ready(signal: AbortSignal | undefined): Promise<{ ok: true; current: Live } | { ok: false; code: SttEngineErrorCode }> {
     const { probe, current } = await ensureProbed();
     if (signal?.aborted) return { ok: false, code: "aborted" };
     if (!probe.ok) return { ok: false, code: probeFailureCode(probe.reason) };
@@ -368,7 +384,13 @@ export function createSttEngine(options: SttEngineOptions): SttEngine {
       }
       current.loaded = true;
     }
+    return { ok: true, current };
+  }
 
+  async function run(pcm: Float32Array, signal: AbortSignal | undefined): Promise<SttEngineOutcome> {
+    const got = await ready(signal);
+    if (!got.ok) return got;
+    const current = got.current;
     if (current.dead) return { ok: false, code: "aborted" };
     const id = nextId++;
     const settled = await request(current, { type: "transcribe", id, pcm }, [pcm.buffer], transcribeDeadlineMs(pcm.length));
@@ -400,6 +422,33 @@ export function createSttEngine(options: SttEngineOptions): SttEngine {
         return await run(pcm, signal);
       } finally {
         signal?.removeEventListener("abort", onAbort);
+        inFlight = false;
+        armIdle();
+      }
+    },
+    async stream(pcm) {
+      const refused = probeReason();
+      if (refused !== null) return { ok: false, code: disabled() && unsupported === null ? "disabled" : "unsupported" };
+      if (inFlight) return { ok: false, code: "busy" };
+      inFlight = true;
+      clearIdle();
+      try {
+        const got = await ready(undefined);
+        if (!got.ok) return got;
+        const current = got.current;
+        if (current.dead) return { ok: false, code: "aborted" };
+        const id = nextId++;
+        const message: SttWorkerRequest = pcm === null ? { type: "stream-stop", id } : { type: "stream", id, pcm };
+        // A step re-transcribes at most 30 s of buffered audio, so the clip deadline for 30 s bounds it.
+        const settled = await request(current, message, pcm === null ? [] : [pcm.buffer], transcribeDeadlineMs(30 * STT_SAMPLE_RATE));
+        const ended = endOf(settled);
+        if (ended !== null) return ended;
+        if (settled.kind !== "reply" || settled.reply.type !== "partial") {
+          kill(null);
+          return { ok: false, code: "transcribe-failed" };
+        }
+        return { ok: true, text: settled.reply.text, pending: settled.reply.pending };
+      } finally {
         inFlight = false;
         armIdle();
       }
