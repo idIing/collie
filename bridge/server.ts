@@ -217,6 +217,7 @@ import { machineHost } from "./crew/machine-host.ts";
 import type { CrewHandler, CrewSurface } from "./crew/router.ts";
 import type { CrewTlsOptions } from "./crew/transport.ts";
 import { asTtsString, readTtsLexicon, synthesizeTts } from "./tts/index.ts";
+import { createLiveStt, type LiveStt } from "./stt/live.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
 import type { SttProvider } from "./stt/provider.ts";
 import { createWhistleModelStore, type WhistleModelStore } from "./stt/whistle-model.ts";
@@ -1473,6 +1474,8 @@ export function startServer(opts: {
   // One gate per Bun server, not per request: two slow uploads and their two provider calls share
   // the same bounded process-local capacity (bridge/stt/http.ts).
   const sttAdmission = createSttAdmission();
+  // Car mode's live takes, made on first use so a bridge without COLLIE_STT_LIVE_URL holds nothing.
+  let liveStt: LiveStt | null = null;
   // The Whistle routes' world (ADR 0096): the model store, and where `stt.json` is. Never forwarded,
   // like `/api/stt`: no whistle route reads `?host=` or is in the crew's FORWARDABLE list. A crew
   // member answers its own whistle routes about its own model and `stt.json`, as it answers its own
@@ -3872,6 +3875,26 @@ export function startServer(opts: {
         // provider's own words never reach the audit log.
         audit.record({ action: "stt", device: whois(req).device, detail: { ...attempt } });
         return secure(response);
+      }
+
+      // ── Live speech-to-text for car mode (bridge/stt/live.ts, experimental) ─────────
+      // WRITE-gated like `/api/stt`: its words go toward a pane. Lead-local, off unless
+      // COLLIE_STT_LIVE_URL names a local engine. Neither the audio nor the words are audited.
+      if (pathname === "/api/stt/live" && req.method === "POST") {
+        const denied = guard(req, cfg, "write", pairingGate);
+        if (denied) return denied;
+        const liveUrl = process.env.COLLIE_STT_LIVE_URL;
+        if (!liveUrl) return text("live speech-to-text is not configured", 404);
+        const take = url.searchParams.get("take") ?? "";
+        if (!/^[A-Za-z0-9-]{8,64}$/.test(take)) return text("bad take id", 400);
+        const pcm = new Uint8Array(await req.arrayBuffer());
+        liveStt ??= createLiveStt({ baseUrl: liveUrl });
+        try {
+          const out = await liveStt.step(take, pcm, url.searchParams.get("end") === "1");
+          return json(out, req.headers.get("accept-encoding"));
+        } catch {
+          return text("the speech engine did not answer", 502);
+        }
       }
 
       // ── Text-to-speech for car mode (bridge/tts/, experimental) ──────────

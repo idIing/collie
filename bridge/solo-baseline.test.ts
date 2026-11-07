@@ -920,6 +920,10 @@ describe("solo zero-tax — routes", () => {
       // here rather than exempted. Lead-local like `/api/stt`, its write gated like it, not forwardable.
       // A bridge whose operator never opens Settings → Voice runs nothing and writes nothing through it.
       "/api/stt/host",
+      // Car mode's live speech (bridge/stt/live.ts): a SOLO route that legitimately extends this list,
+      // named here rather than exempted. Write-gated like `/api/stt`, lead-local, a 404 unless
+      // COLLIE_STT_LIVE_URL names a local engine.
+      "/api/stt/live",
       // The Whistle model (ADR 0096): a SOLO route that legitimately extends this list, named here
       // rather than exempted. Lead-local like `/api/stt`, gated like it, and not forwardable. A bridge
       // whose operator never taps "Download to host" downloads nothing and writes nothing through it.

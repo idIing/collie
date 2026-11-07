@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { liveTranscribe } from "@/lib/api";
 import { createSpeechEndpoint } from "@/lib/speech-endpoint";
-import { STT_SAMPLE_RATE } from "@/lib/stt-engine";
-import { phoneEngine } from "@/lib/stt";
 
-// CAR MODE'S TALK: the phone's own engine (Whistle), fed live, so the words appear while they are
-// spoken. Audio never leaves the phone.
+// CAR MODE'S TALK: live words from the host's GPU engine (Parakeet in dictate-stt, behind the
+// bridge's POST /api/stt/live), so they appear while they are spoken. The audio goes to the operator's
+// own machine over the tailnet and nowhere else.
 //
-// The mic is tapped at 16 kHz (or resampled to it) and handed to the engine about a second at a time;
-// each step answers the words it COMMITTED (two passes agreed) and the unconfirmed tail. Steps run
-// one after another: audio that arrives while a step runs waits in the buffer and rides the next one.
+// The mic is tapped at 16 kHz (or resampled to it) and posted about half a second at a time; each
+// step answers the words COMMITTED so far (two passes agreed) and the unconfirmed tail. Steps run one
+// after another: audio that arrives while a step runs waits in the buffer and rides the next one.
 //
 // Silence is judged by Collie's own endpoint (lib/speech-endpoint.ts, the composer's 2 s), and only
 // reported: whether quiet SENDS is the caller's choice (Car mode's Autoplay switch).
@@ -30,15 +30,10 @@ export interface CarTalk {
   cancel: () => void;
 }
 
-/** About one second per engine step, as the engine asks. */
-const STEP_SAMPLES = STT_SAMPLE_RATE;
+const STT_SAMPLE_RATE = 16_000;
+/** Half a second per step: a GPU pass over the whole take costs tens of milliseconds. */
+const STEP_SAMPLES = STT_SAMPLE_RATE / 2;
 const TAP_FRAMES = 4096;
-
-function join(a: string, b: string): string {
-  if (!a) return b;
-  if (!b) return a;
-  return `${a} ${b}`;
-}
 
 /** Linear resample to 16 kHz, for a browser that would not open a 16 kHz context. */
 function to16k(input: Float32Array, rate: number): Float32Array {
@@ -52,6 +47,12 @@ function to16k(input: Float32Array, rate: number): Float32Array {
     const f = x - i0;
     out[i] = (input[i0] ?? 0) * (1 - f) + (input[i1] ?? 0) * f;
   }
+  return out;
+}
+
+function toInt16(samples: Float32Array): Int16Array {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = Math.max(-1, Math.min(1, samples[i] ?? 0)) * 0x7fff;
   return out;
 }
 
@@ -70,14 +71,15 @@ export function useCarTalk({ onSilence }: { onSilence: () => void }): CarTalk {
   const committedRef = useRef("");
   const run = useRef(0);
   const teardownRef = useRef<() => void>(() => {});
-  const buffer = useRef<Float32Array[]>([]);
+  const buffer = useRef<Int16Array[]>([]);
+  const takeId = useRef("");
   const buffered = useRef(0);
   const stepping = useRef<Promise<void>>(Promise.resolve());
   const onSilenceRef = useRef(onSilence);
   onSilenceRef.current = onSilence;
 
-  const take = (): Float32Array => {
-    const out = new Float32Array(buffered.current);
+  const take = (): Int16Array => {
+    const out = new Int16Array(buffered.current);
     let at = 0;
     for (const part of buffer.current) {
       out.set(part, at);
@@ -88,20 +90,27 @@ export function useCarTalk({ onSilence }: { onSilence: () => void }): CarTalk {
     return out;
   };
 
-  /** Queue one engine step; `pcm` null ends the stream. Steps never overlap. */
-  const step = useCallback((pcm: Float32Array | null, mine: number): Promise<void> => {
+  /** Queue one step; `end` finishes the take. Steps never overlap. */
+  const step = useCallback((pcm: Int16Array, end: boolean, mine: number): Promise<void> => {
+    const id = takeId.current;
     const runStep = async (): Promise<void> => {
-      const engine = await phoneEngine();
-      const out = await engine.stream(pcm);
-      if (run.current !== mine) return;
-      if (!out.ok) {
-        setError(out.code === "bytes-failed" ? "Whistle isn't on this phone yet: Settings → Voice → This phone." : `Speech engine: ${out.code}`);
+      try {
+        const out = await liveTranscribe(id, pcm, end);
+        if (run.current !== mine) return;
+        if ("text" in out) {
+          committedRef.current = out.text;
+          setCommitted(out.text);
+          setPending("");
+          return;
+        }
+        committedRef.current = out.committed;
+        setCommitted(out.committed);
+        setPending(out.pending);
+      } catch {
+        if (run.current !== mine) return;
+        setError("Couldn't reach the speech engine on spectral. Is dictate-stt running?");
         setPhase("error");
-        return;
       }
-      committedRef.current = join(committedRef.current, out.text);
-      setCommitted(committedRef.current);
-      setPending(out.pending);
     };
     stepping.current = stepping.current.then(runStep, runStep);
     return stepping.current;
@@ -121,9 +130,8 @@ export function useCarTalk({ onSilence }: { onSilence: () => void }): CarTalk {
     buffer.current = [];
     buffered.current = 0;
     setPhase("starting");
+    takeId.current = crypto.randomUUID();
     try {
-      // A stale stream from an abandoned take is ended first, so this one starts empty.
-      await step(null, -1);
       const media = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
@@ -147,10 +155,10 @@ export function useCarTalk({ onSilence }: { onSilence: () => void }): CarTalk {
         if (run.current !== mine) return;
         const raw = event.inputBuffer.getChannelData(0);
         const frame = endpoint.next(rms(raw), performance.now());
-        const pcm = to16k(raw, ctx.sampleRate);
+        const pcm = toInt16(to16k(raw, ctx.sampleRate));
         buffer.current.push(pcm);
         buffered.current += pcm.length;
-        if (buffered.current >= STEP_SAMPLES) void step(take(), mine);
+        if (buffered.current >= STEP_SAMPLES) void step(take(), false, mine);
         if (frame.finish && !silenced) {
           silenced = true;
           onSilenceRef.current();
@@ -178,8 +186,7 @@ export function useCarTalk({ onSilence }: { onSilence: () => void }): CarTalk {
     const mine = run.current;
     stopAudio();
     setPhase("finishing");
-    if (buffered.current > 0) await step(take(), mine);
-    await step(null, mine);
+    await step(take(), true, mine);
     if (run.current !== mine) return "";
     setPending("");
     setPhase("idle");
@@ -191,12 +198,11 @@ export function useCarTalk({ onSilence }: { onSilence: () => void }): CarTalk {
     stopAudio();
     buffer.current = [];
     buffered.current = 0;
-    void step(null, -1);
     committedRef.current = "";
     setCommitted("");
     setPending("");
     setPhase("idle");
-  }, [step]);
+  }, []);
 
   useEffect(
     () => () => {

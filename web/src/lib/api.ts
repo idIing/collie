@@ -2916,3 +2916,26 @@ export async function synthesizeSpeech(text: string, signal?: AbortSignal): Prom
   const bytes = Uint8Array.from(atob(audio), (c) => c.charCodeAt(0));
   return { audio: new Blob([bytes], { type: mime }), words };
 }
+
+/** One reading of a live take: committed words and the pending tail, or, on the end, the final text. */
+export type LiveSttReading = { committed: string; pending: string } | { text: string };
+
+/**
+ * Send one piece of a car-mode take (16 kHz mono int16 LE) to the bridge's live engine. `end`
+ * finishes the take and answers its final text. Throws on any refusal; car mode says one sentence.
+ */
+export async function liveTranscribe(take: string, pcm: Int16Array, end: boolean, signal?: AbortSignal): Promise<LiveSttReading> {
+  const query = new URLSearchParams({ take });
+  if (end) query.set("end", "1");
+  const res = await apiFetch(`/api/stt/live?${query.toString()}`, {
+    method: "POST",
+    body: new Blob([pcm.slice()]),
+    headers: { "content-type": "application/octet-stream", [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() },
+    signal: withTimeout(signal, 20_000),
+  });
+  if (!res.ok) throw new Error(`live stt ${res.status}`);
+  const body = parseJsonObject(await res.text());
+  const text = asJsonString(body?.text);
+  if (text !== undefined) return { text };
+  return { committed: asJsonString(body?.committed) ?? "", pending: asJsonString(body?.pending) ?? "" };
+}

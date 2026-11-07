@@ -292,6 +292,10 @@ export const ACK_MANIFEST = {
     channel: "echo",
     why: "The mic strip's `transcribing` phase holds while the clip is in flight and the transcript landing in the composer is the outcome; every refusal comes back as a VALUE and is spoken by the composer's onError on the status channel (hooks/use-stt-recorder.ts).",
   },
+  liveTranscribe: {
+    channel: "inline",
+    why: "Car mode's live words ARE the receipt: they appear in the caption area as they are heard, and a refusal is the sentence that replaces them there (hooks/use-car-talk.ts).",
+  },
   synthesizeSpeech: {
     channel: "inline",
     why: "Car mode is the whole screen while it renders, so a refusal is the sentence in its caption area, where the driver's next glance lands (components/car-view.tsx).",

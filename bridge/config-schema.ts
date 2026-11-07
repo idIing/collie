@@ -970,6 +970,15 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     doc: "The command the local-cli provider runs, an absolute path or a name on PATH.",
   },
 
+  {
+    key: "stt_live_url",
+    env: "COLLIE_STT_LIVE_URL",
+    section: "stt",
+    kind: "string",
+    default: "",
+    doc: "Car mode's live engine: a local POST /v1/transcribe base (dictate-stt). Empty leaves Talk off.",
+  },
+
   // ── tts ────────────────────────────────────────────────────────────────────
   {
     key: "tts_url",
