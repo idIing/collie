@@ -2524,6 +2524,7 @@ export function AgentChat({
               paneLabel={name || paneId}
               paneKey={paneScopeKey(scope, paneId)}
               reply={latestReply}
+              status={agent?.status ?? "unknown"}
               onExit={() => setCar(false)}
               onSend={readOnly ? undefined : (words) => composerRef.current?.sendSpoken(words) ?? Promise.resolve(false)}
             />

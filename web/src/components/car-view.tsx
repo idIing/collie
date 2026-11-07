@@ -4,8 +4,10 @@ import { Mic, Pause, Play, RotateCcw, RotateCw, Send, X } from "lucide-react";
 import { synthesizeSpeech } from "@/lib/api";
 import { buildCarScript, segmentAt, spanText, type CarScript, type CarTarget } from "@/lib/car-script";
 import { CAR_SPEEDS, SEEK_STEP_S, snapSeek, wordAt, type CarWord } from "@/lib/car-clock";
+import { carStatusLine } from "@/lib/car-status";
 import { useCarTalk } from "@/hooks/use-car-talk";
-import type { TranscriptEntry } from "@/lib/types";
+import { StatusDot } from "@/components/status-badge";
+import type { AgentStatus, TranscriptEntry } from "@/lib/types";
 
 // CAR MODE: one pane, one reply, read aloud by the bridge's local engine.
 //
@@ -21,6 +23,8 @@ interface CarViewProps {
   /** Per-pane address, the key the Autoplay switch is remembered under. */
   paneKey: string;
   reply: TranscriptEntry | null;
+  /** Herdr's status for the pane: whether the latest reply is final or a progress note. */
+  status: AgentStatus;
   onExit: () => void;
   /**
    * Send spoken words to this pane down the composer's guarded path. False means they went into the
@@ -61,7 +65,7 @@ function fmt(s: number): string {
   return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 }
 
-export function CarView({ paneLabel, paneKey, reply, onExit, onSend }: CarViewProps) {
+export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: CarViewProps) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [render, setRender] = useState<Render | null>(null);
   const [loading, setLoading] = useState(false);
@@ -259,6 +263,7 @@ export function CarView({ paneLabel, paneKey, reply, onExit, onSend }: CarViewPr
   }, [render, now]);
 
   const replyIsNewer = reply && render && reply.uuid !== render.uuid;
+  const line = carStatusLine(status, reply !== null);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background text-foreground" role="region" aria-label="Car mode">
@@ -287,6 +292,13 @@ export function CarView({ paneLabel, paneKey, reply, onExit, onSend }: CarViewPr
           <X className="size-7" />
         </button>
       </header>
+
+      {/* What Play would read, before it is pressed: the shape and the word carry the state together. */}
+      <p className="flex items-center gap-3 px-4 pb-2 text-lg" aria-live="polite">
+        <StatusDot status={status} live className="size-5" />
+        <span className="font-bold">{line.word}</span>
+        <span className="text-muted-foreground">{line.play}</span>
+      </p>
 
       <main className="flex min-h-0 flex-1 items-center overflow-hidden px-4" aria-live="off">
         {talking || talk.phase === "error" ? (
