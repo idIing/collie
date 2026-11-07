@@ -403,6 +403,52 @@ The reasoning for all of the above — why this was declined twice, what changed
 looks like this — is [ADR 0029](../.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md).
 
 
+## Car mode (experimental)
+
+A full-screen, hands-mostly-free view of one agent's replies, read aloud: a podcast of the pane
+that you can talk back to. Open it from a pane's actions sheet (**Car mode**, next to **Read latest
+reply**). It needs two local engines on the host, both on loopback, and nothing leaves the machine.
+
+| env | engine | what it does |
+| --- | --- | --- |
+| `COLLIE_TTS_URL` | [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) (`/dev/captioned_speech`) | Speech with word timestamps, behind `POST /api/tts`. `COLLIE_TTS_VOICE` picks the voice (default `af_heart`). |
+| `COLLIE_STT_LIVE_URL` | any `POST /v1/transcribe` taking 16 kHz mono int16 and answering `{"text"}` (Parakeet on the GPU here) | Live words while you **Talk**, behind `POST /api/stt/live`. Absent: no Talk button. |
+
+Without `COLLIE_TTS_URL` the view opens but cannot read. Neither engine is the composer's voice
+provider above: `collie stt` setup does not touch them, and they do not touch it.
+
+**What is on screen.** One scrolling document: the agent's **final** replies (its last prose before
+your next turn, so the "let me check…" notes between tool calls are left out) with your own turns as
+thin dividers. While the agent is still working, its newest note is shown last and labelled a
+progress note. Tables and code blocks are drawn; code wraps, a wide table scrolls sideways inside
+its own box. Text always wraps; paths break at their slashes. Pinch to change the text size (kept
+on the device). Older replies load as you scroll up. A status line under the header says whether
+Play reads a final reply (**Stopped**), a progress note (**Working**), or nothing yet (**New chat**),
+by shape and word.
+
+**Playback.** Play reads the newest reply; **Play from here** reads any older one and carries on
+into the newer ones. ⏮ ⏭ step a whole reply (⏮ restarts the current one past 3 s), as do a car's
+previous/next-track buttons; ±5 s seeks snap to a word start, and the lock screen's seek buttons do
+the same. Speeds 0.75–1.5×. The spoken word is bold and underlined, a table cell or code block gets
+a heavy outline, and the document follows the reading unless you scrolled in the last few seconds.
+The screen stays awake.
+
+**What is said.** Each block is read in order. A table row is read as column name then value
+("A, true; P(A), 0.3"). Code of three lines or fewer is read; longer code is announced with its
+length. A file path is said as its last two parts (`…/balatro/alpha-balatro` → "balatro/alpha-balatro")
+and shown whole. Pronunciations come from `tts-lexicon.json` in the state dir,
+`{ "term": "ipa" }`; a missing or malformed file reads as empty.
+
+**Switching agents.** Swipe sideways, or tap the arrows in the header, which name each neighbour
+with its status mark. The swipe holds agents that are working, need you, or still have a warm
+prompt cache (a harness with no cache reading counts if it was active in the last 30 minutes). The
+order holds while car mode is open; a newly active agent joins at the left. Car mode, Autoplay and
+speed come with you; playback stops.
+
+**Autoplay** (off on every entry) reads each new reply as it lands, and makes two seconds of quiet
+send what you said with **Talk**. Without it, Talk waits for **Send**, and a send the pane cannot
+take lands in the message box instead.
+
 ## Web Push (optional)
 
 Disabled by default. Setup requires three steps. The sender library (`web-push`) is included as an

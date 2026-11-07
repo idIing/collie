@@ -103,10 +103,11 @@ The config file groups every setting under a `[section]`. The environment name o
 | `standby` | the deputy's second door: port, bind address, arming |
 | `update` | where releases come from, how many versions stay, a GitHub token for the release check |
 | `serve` | whether Collie publishes the front door, on what, and under which path (`base_path`) |
+| `stt` | speech-to-text, absent until `collie stt setup` runs; `stt_live_url` is car mode's live Talk engine |
+| `tts` | car mode's local speech engine and voice ([Car mode](voice-and-push.md#car-mode-experimental)) |
 
 The durable agents one Collie runs beside its multiplexer are not in `config.toml`. Each is one entry in
 `sources.json`, in the same folder as `.env` ([Durable agents](durable-agents.md#attach-a-durable-agent)).
-| `stt` | speech-to-text, absent until `collie stt setup` runs |
 
 ### Telemetry
 
