@@ -1,5 +1,6 @@
 import { replyProse } from "./latest-reply";
 import { parseMarkdown, type MdBlock, type MdSpan } from "./markdown";
+import { speakable, type SpeechSub } from "./car-speech";
 import type { TranscriptEntry } from "./types";
 
 // Car mode speaks a reply as ONE text, so the timeline, the captions and the highlight all read one
@@ -17,6 +18,10 @@ export interface CarSegment {
   start: number;
   end: number;
   target: CarTarget;
+  /** The text this stretch shows on screen (prose, a list item), or "" when the block draws itself. */
+  shown: string;
+  /** Spoken-to-shown substitutions, offsets relative to `start` and to `shown` (lib/car-speech.ts). */
+  subs: SpeechSub[];
 }
 
 export interface CarScript {
@@ -85,40 +90,56 @@ function sentence(text: string): string {
   return /[.!?:;]$/.test(t) ? t : `${t}.`;
 }
 
+/** Code this short is read aloud; longer code is announced. */
+export const SPOKEN_CODE_LINES = 3;
+
 export function buildCarScript(entry: TranscriptEntry): CarScript {
   const blocks = parseMarkdown(replyProse(entry));
   const segments: CarSegment[] = [];
   let text = "";
 
+  /** Say `shown` (speakable spelling, stop added) and remember both spellings. */
+  const sayShown = (shown: string, target: CarTarget) => {
+    const t = shown.trim();
+    if (!t) return;
+    const { spoken, subs } = speakable(t);
+    push(sentence(spoken), target, t, subs);
+  };
+  /** Say words that have no text of their own on screen (table rows, code). */
   const say = (piece: string, target: CarTarget) => {
     const t = piece.trim();
-    if (!t) return;
+    if (t) push(speakable(t).spoken, target, "", []);
+  };
+  const push = (spoken: string, target: CarTarget, shown: string, subs: SpeechSub[]) => {
     if (text) text += " ";
-    segments.push({ start: text.length, end: text.length + t.length, target });
-    text += t;
+    segments.push({ start: text.length, end: text.length + spoken.length, target, shown, subs });
+    text += spoken;
   };
 
   blocks.forEach((block, b) => {
     switch (block.kind) {
       case "heading":
       case "paragraph":
-        say(sentence(spanText(block.spans)), { block: b });
+        sayShown(spanText(block.spans), { block: b });
         return;
       case "quote":
         // A quote holds blocks of its own; it is said as one segment, so the whole quote is marked.
-        say(sentence(quoteText(block.blocks)), { block: b });
+        sayShown(quoteText(block.blocks), { block: b });
         return;
       case "list":
         // One segment per item, so the highlight steps down the list item by item.
         block.items.forEach((item, row) => {
           const t = spanText(item);
-          if (t) say(sentence(t), { block: b, row, col: 0 });
+          if (t) sayShown(t, { block: b, row, col: 0 });
         });
         return;
       case "code": {
-        // Code is shown, not read character by character. A speakable-code layer replaces this line.
-        const lines = block.text.split("\n").length;
-        say(sentence(`Code block${block.lang ? ` in ${block.lang}` : ""}, ${lines} line${lines === 1 ? "" : "s"}`), { block: b });
+        // Short code is read as written, a line at a time; longer code is announced and left to the
+        // eye. A speakable-code layer would replace both.
+        const lines = block.text.replace(/\n+$/, "").split("\n");
+        const kind = `Code${block.lang ? ` in ${block.lang}` : ""}`;
+        if (lines.length <= SPOKEN_CODE_LINES) say(`${kind}: ${lines.filter((l) => l.trim()).map((l) => sentence(l)).join(" ")}`, { block: b });
+        else say(sentence(`${kind}, ${lines.length} lines`), { block: b });
         return;
       }
       case "table": {

@@ -24,6 +24,14 @@ describe("car script", () => {
   test("a quote is one segment holding its nested prose", () => {
     const s = buildCarScript(reply("> First line\n>\n> > Nested"));
     expect(s.text).toBe("First line. Nested.");
-    expect(s.segments).toEqual([{ start: 0, end: s.text.length, target: { block: 0 } }]);
+    expect(s.segments).toMatchObject([{ start: 0, end: s.text.length, target: { block: 0 }, shown: "First line. Nested." }]);
+  });
+
+  test("short code is read; long code is announced; paths are said short but shown whole", () => {
+    expect(buildCarScript(reply("```sh\nls -la\n```")).text).toBe("Code in sh: ls -la.");
+    expect(buildCarScript(reply("```\na\nb\nc\nd\n```")).text).toBe("Code, 4 lines.");
+    const s = buildCarScript(reply("Edit /home/idle/projects/balatro/alpha-balatro please"));
+    expect(s.text).toBe("Edit balatro/alpha-balatro please.");
+    expect(s.segments[0]?.shown).toBe("Edit /home/idle/projects/balatro/alpha-balatro please");
   });
 });

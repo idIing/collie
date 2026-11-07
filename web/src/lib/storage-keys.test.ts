@@ -67,7 +67,7 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:zen-enabled:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:auto-zen-enabled:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:pins:v1", { area: "local", prefix: false, fate: "kept", why: "pinned pane ids, no content" }],
-  ["collie:car-autoplay:v1:", { area: "local", prefix: true, fate: "kept", why: "car mode's Autoplay switch per pane address, no content" }],
+  ["collie:car-text-scale:v1", { area: "local", prefix: false, fate: "kept", why: "car mode's pinch-chosen text size, a number" }],
   ["collie:report-episodes:v1", { area: "local", prefix: false, fate: "kept", why: "failed-send episodes for a report: pane ids, request ids, outcome and reason codes, no content (ADR 0123)" }],
   ["collie:wide-layout:v1", { area: "local", prefix: false, fate: "kept", why: "large-screen columns per space: pane addresses and widths, no content (ADR 0120)" }],
   ["collie:wide-sidebar:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],

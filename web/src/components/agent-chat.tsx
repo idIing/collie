@@ -34,6 +34,7 @@ import { useLatestReply } from "@/hooks/use-latest-reply";
 import { finishedTurnKey, useMirrorImages } from "@/hooks/use-mirror-images";
 import { useDeviceSpeech } from "@/hooks/use-device-speech";
 import { CarView } from "@/components/car-view";
+import { carSession, enterCar, exitCar } from "@/lib/car-session";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
@@ -1328,7 +1329,8 @@ export function AgentChat({
   const clippedReply =
     prefs.expandClippedReply && placement?.fit === "clipped" && !findOpen ? latestReply : null;
   const speech = useDeviceSpeech(locale);
-  const [car, setCar] = useState(false);
+  // Car mode outlives a swipe to another agent: the screen remounts per pane, the drive does not.
+  const [car, setCar] = useState(() => carSession.open);
   const speechChunks = useMemo(
     () =>
       latestReply && replyIsOnMirror(display, latestReply) ? replySpeechChunks(latestReply) : [],
@@ -2521,11 +2523,18 @@ export function AgentChat({
               for. */}
           {car && (
             <CarView
+              paneId={paneId}
+              scope={scope}
               paneLabel={name || paneId}
-              paneKey={paneScopeKey(scope, paneId)}
+              here={hereKey ?? paneScopeKey(scope, paneId)}
               reply={latestReply}
               status={agent?.status ?? "unknown"}
-              onExit={() => setCar(false)}
+              agents={agents}
+              onSwitch={switchToPane}
+              onExit={() => {
+                exitCar();
+                setCar(false);
+              }}
               onSend={readOnly ? undefined : (words) => composerRef.current?.sendSpoken(words) ?? Promise.resolve(false)}
             />
           )}
@@ -3570,6 +3579,7 @@ export function AgentChat({
           readingReply={speech.speaking}
           onCarMode={() => {
             speech.stop();
+            enterCar();
             setCar(true);
           }}
           // ZEN'S ONE ENTRY POINT, and the absence of this callback IS the gate — the sheet hides a

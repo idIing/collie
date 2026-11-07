@@ -1,30 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, Pause, Play, RotateCcw, RotateCw, Send, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Mic, Pause, Play, RotateCcw, RotateCw, Send, SkipBack, SkipForward, X } from "lucide-react";
 
 import { synthesizeSpeech } from "@/lib/api";
-import { buildCarScript, segmentAt, spanText, type CarScript, type CarTarget } from "@/lib/car-script";
+import { buildCarScript, type CarScript } from "@/lib/car-script";
 import { CAR_SPEEDS, SEEK_STEP_S, snapSeek, wordAt, type CarWord } from "@/lib/car-clock";
+import { carFeed, feedReplies } from "@/lib/car-feed";
+import { nextLineup } from "@/lib/car-lineup";
+import { carSession } from "@/lib/car-session";
 import { carStatusLine } from "@/lib/car-status";
+import { paneRowKey } from "@/lib/hosts";
+import { paneName } from "@/lib/pane-name";
+import type { Scope } from "@/lib/scope";
+import { shownStatus } from "@/lib/triage";
 import { useCarTalk } from "@/hooks/use-car-talk";
+import { useCarFeedData } from "@/hooks/use-car-feed";
+import { CarDocument, type CarActive } from "@/components/car-document";
 import { StatusDot } from "@/components/status-badge";
-import type { AgentStatus, TranscriptEntry } from "@/lib/types";
+import type { AgentStatus, AgentView, TranscriptEntry } from "@/lib/types";
 
-// CAR MODE: one pane, one reply, read aloud by the bridge's local engine.
+// CAR MODE: a podcast of the pane's replies that you can talk back to, read aloud by the bridge's
+// local engine.
 //
-// Everything on screen reads one clock, the audio element's currentTime: the timeline, the word in
-// bold, the cell outlined. Seeks snap to a word start so playback never resumes mid-word.
+// The screen is one document (car-document.tsx): the final replies, your turns between them. Play
+// reads the newest; "Play from here" reads any older one and carries on into the newer ones; ⏮ ⏭
+// step a whole reply (⏮ restarts the current one first, past 3 s). Swiping sideways moves to the next
+// agent with something going on (lib/car-lineup.ts); car mode, Autoplay and speed come along
+// (lib/car-session.ts), playback does not.
 //
+// Everything on screen reads one clock, the audio element's currentTime. Seeks snap to a word start.
 // The current word is marked by WEIGHT and an UNDERLINE, a cell by a heavy OUTLINE — never by hue
 // alone (the operator this was built for is colourblind).
 
 interface CarViewProps {
+  paneId: string;
+  scope?: Scope;
   /** Shown big at the top, so a glance says whose answer this is. */
   paneLabel: string;
-  /** Per-pane address, the key the Autoplay switch is remembered under. */
-  paneKey: string;
+  /** This pane's row key (lib/hosts.ts), its place in the swipe. */
+  here: string;
+  /** The newest reply the pane view holds: what Autoplay starts on. */
   reply: TranscriptEntry | null;
   /** Herdr's status for the pane: whether the latest reply is final or a progress note. */
   status: AgentStatus;
+  /** Every agent on the herd, for the swipe. */
+  agents: AgentView[];
+  /** Open another agent in car mode. */
+  onSwitch: (pane: AgentView) => void;
   onExit: () => void;
   /**
    * Send spoken words to this pane down the composer's guarded path. False means they went into the
@@ -40,6 +61,17 @@ interface Render {
   url: string;
 }
 
+/** ⏮ past this many seconds into a reply restarts it; earlier, it goes to the reply before. */
+const RESTART_AFTER_S = 3;
+/** Rendered replies kept, so stepping back and forth does not re-render. */
+const RENDERS_KEPT = 8;
+const SCALE_KEY = "collie:car-text-scale:v1";
+const SCALE_MIN = 0.6;
+const SCALE_MAX = 2.2;
+/** A sideways swipe: this far, mostly sideways, this fast. */
+const SWIPE_PX = 70;
+const SWIPE_MS = 700;
+
 /** A silent WAV, as a blob URL (the CSP admits blob: media, not data:): the first tap's unlock clip. */
 let silence: string | null = null;
 function silenceUrl(): string {
@@ -49,14 +81,20 @@ function silenceUrl(): string {
   return silence;
 }
 
-const autoplayKey = (paneKey: string) => `collie:car-autoplay:v1:${paneKey}`;
-
-function readAutoplay(paneKey: string): boolean {
+function readScale(): number {
   try {
-    return globalThis.localStorage?.getItem(autoplayKey(paneKey)) === "1";
+    const v = Number(globalThis.localStorage?.getItem(SCALE_KEY));
+    return Number.isFinite(v) && v >= SCALE_MIN && v <= SCALE_MAX ? v : 1;
   } catch {
-    return false;
+    return 1;
   }
+}
+
+/** The distance between two fingers, for the pinch. */
+function spread(e: React.TouchEvent): number {
+  const a = e.touches[0];
+  const b = e.touches[1];
+  return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0;
 }
 
 function fmt(s: number): string {
@@ -65,126 +103,189 @@ function fmt(s: number): string {
   return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 }
 
-export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: CarViewProps) {
+export function CarView({ paneId, scope, paneLabel, here, reply, status, agents, onSwitch, onExit, onSend }: CarViewProps) {
   const audio = useRef<HTMLAudioElement | null>(null);
-  const [render, setRender] = useState<Render | null>(null);
+  const [current, setCurrent] = useState<Render | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [now, setNow] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [speed, setSpeed] = useState<number>(1);
-  const [autoplay, setAutoplay] = useState(() => readAutoplay(paneKey));
+  const [speed, setSpeed] = useState<number>(carSession.speed);
+  const [autoplay, setAutoplay] = useState(carSession.autoplay);
+  const [scale, setScale] = useState(readScale);
   const unlocked = useRef(false);
 
-  const ready = reply !== null && !reply.partial;
+  useEffect(() => {
+    carSession.autoplay = autoplay;
+    carSession.speed = speed;
+  }, [autoplay, speed]);
 
-  // ── Talk: live words on the phone's engine; Send sends, or quiet does when Autoplay is on ─────
-  const [talkNote, setTalkNote] = useState<string | null>(null);
-  const sendTalk = useRef<() => Promise<void>>(async () => {});
-  const talk = useCarTalk({ onSilence: () => { if (autoplayRef.current) void sendTalk.current(); } });
-  const autoplayRef = useRef(autoplay);
-  autoplayRef.current = autoplay;
-  sendTalk.current = async () => {
-    const words = await talk.finish();
-    if (!words) {
-      setTalkNote("Didn't catch anything.");
-      return;
+  // ── The document: final replies + your turns, and the newest reply even before the log has it ──
+  const data = useCarFeedData({ paneId, scope, trigger: `${reply?.uuid ?? ""}|${reply?.partial === true}|${status}` });
+  const feed = useMemo(() => {
+    const items = carFeed(data.entries, status);
+    if (reply && !reply.partial && !items.some((i) => i.entry.uuid === reply.uuid)) {
+      items.push({ kind: "reply", entry: reply, progress: status === "working" });
     }
-    const sent = (await onSend?.(words)) ?? false;
-    setTalkNote(sent ? `Sent: ${words}` : "Not sent: the pane couldn't take it, so it's in the message box.");
-  };
-  const startTalk = useCallback(() => {
-    audio.current?.pause();
-    setTalkNote(null);
-    void talk.start();
-  }, [talk]);
-  const talking = talk.phase === "starting" || talk.phase === "listening" || talk.phase === "finishing";
+    return items;
+  }, [data.entries, status, reply]);
+  const replies = useMemo(() => feedReplies(feed), [feed]);
 
-  // ── Render: one request per reply, cached by uuid ───────────────────────
-  const ensureRender = useCallback(async (): Promise<Render | null> => {
-    if (!reply || reply.partial) return null;
-    if (render?.uuid === reply.uuid) return render;
-    setLoading(true);
-    setError(null);
-    try {
-      const script = buildCarScript(reply);
-      const out = await synthesizeSpeech(script.text);
-      const next = { uuid: reply.uuid, script, words: out.words, url: URL.createObjectURL(out.audio) };
-      setRender((prev) => {
-        if (prev) URL.revokeObjectURL(prev.url);
-        return next;
-      });
-      return next;
-    } catch {
-      setError("Couldn't render this reply. Is the speech engine running?");
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [reply, render]);
-
-  const playRender = useCallback(
-    async (r: Render) => {
-      const el = audio.current;
-      if (!el) return;
-      if (el.src !== r.url) {
-        el.src = r.url;
-        el.currentTime = 0;
-      }
-      el.playbackRate = speed;
-      await el.play().catch(() => {
-        setError("Tap Play to start (the browser blocked playback).");
-      });
+  // One script per reply, kept by id: the document draws from the same object the audio was cut to.
+  const scriptCache = useRef(new Map<string, CarScript>());
+  const scriptOf = useCallback(
+    (uuid: string): CarScript => {
+      const hit = scriptCache.current.get(uuid);
+      if (hit) return hit;
+      const entry = replies.find((r) => r.uuid === uuid);
+      const script = buildCarScript(entry ?? { uuid, ts: "", role: "assistant", parts: [] });
+      if (entry) scriptCache.current.set(uuid, script);
+      return script;
     },
-    [speed],
+    [replies],
   );
 
-  const togglePlay = useCallback(async () => {
+  // ── Rendering audio: one request per reply, a few kept ─────────────────────
+  const renders = useRef(new Map<string, Promise<Render>>());
+  const renderOf = useCallback(
+    (entry: TranscriptEntry): Promise<Render> => {
+      const hit = renders.current.get(entry.uuid);
+      if (hit) return hit;
+      const script = scriptOf(entry.uuid);
+      const job = synthesizeSpeech(script.text).then((out) => ({
+        uuid: entry.uuid,
+        script,
+        words: out.words,
+        url: URL.createObjectURL(out.audio),
+      }));
+      job.catch(() => renders.current.delete(entry.uuid));
+      renders.current.set(entry.uuid, job);
+      // Evict the oldest beyond the budget (Map keeps insertion order).
+      while (renders.current.size > RENDERS_KEPT) {
+        const [oldest, p] = renders.current.entries().next().value ?? [];
+        if (oldest === undefined || p === undefined) break;
+        renders.current.delete(oldest);
+        void p.then((r) => URL.revokeObjectURL(r.url)).catch(() => {});
+      }
+      return job;
+    },
+    [scriptOf],
+  );
+  useEffect(
+    () => () => {
+      for (const p of renders.current.values()) void p.then((r) => URL.revokeObjectURL(r.url)).catch(() => {});
+    },
+    [],
+  );
+
+  /** Load reply `entry` and play it from the start (or from `at`). */
+  const playEntry = useCallback(
+    async (entry: TranscriptEntry, at = 0) => {
+      const el = audio.current;
+      if (!el) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const r = await renderOf(entry);
+        setCurrent(r);
+        if (el.src !== r.url) el.src = r.url;
+        el.currentTime = at;
+        el.playbackRate = speed;
+        await el.play().catch(() => setError("Tap Play to start (the browser blocked playback)."));
+        // The next reply renders while this one plays, so carrying on has no gap.
+        const i = replies.findIndex((x) => x.uuid === entry.uuid);
+        const after = replies[i + 1];
+        if (after) void renderOf(after).catch(() => {});
+      } catch {
+        setError("Couldn't render this reply. Is the speech engine running?");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [renderOf, replies, speed],
+  );
+
+  /** iOS counts a tap as permission to play only inside the tap's own task: unlock on the first one. */
+  const unlock = useCallback(() => {
     const el = audio.current;
-    if (el && playing) {
-      el.pause();
-      return;
-    }
-    // iOS counts a tap as permission to play only while the tap's own task runs, and the render
-    // below is a network round trip. So the FIRST tap plays a silent clip right here, which unlocks
-    // this element for every later play() — the render, and autoplay of later replies.
     if (el && !unlocked.current) {
       unlocked.current = true;
       el.src = silenceUrl();
       void el.play().then(() => el.pause()).catch(() => {});
     }
-    const r = await ensureRender();
-    if (r) await playRender(r);
-  }, [ensureRender, playRender, playing]);
+  }, []);
+
+  const index = current ? replies.findIndex((r) => r.uuid === current.uuid) : -1;
+
+  const togglePlay = useCallback(async () => {
+    const el = audio.current;
+    if (!el) return;
+    if (playing) {
+      el.pause();
+      return;
+    }
+    unlock();
+    if (current && el.src === current.url && !el.ended) {
+      await el.play().catch(() => {});
+      return;
+    }
+    const newest = replies.at(-1);
+    if (newest) await playEntry(newest);
+  }, [playing, current, replies, playEntry, unlock]);
+
+  const step = useCallback(
+    (dir: -1 | 1) => {
+      const el = audio.current;
+      unlock();
+      if (dir === -1 && el && current && el.currentTime > RESTART_AFTER_S) {
+        el.currentTime = 0;
+        setNow(0);
+        return;
+      }
+      const target = replies[(index < 0 ? replies.length : index) + dir];
+      if (target) void playEntry(target);
+    },
+    [current, index, replies, playEntry, unlock],
+  );
+  const prev = useCallback(() => step(-1), [step]);
+  const next = useCallback(() => step(1), [step]);
+
+  const playFrom = useCallback(
+    (uuid: string) => {
+      unlock();
+      const entry = replies.find((r) => r.uuid === uuid);
+      if (entry) void playEntry(entry);
+    },
+    [replies, playEntry, unlock],
+  );
+
+  // Carry on into the newer replies; stop after the newest.
+  const onEnded = () => {
+    setPlaying(false);
+    const after = index >= 0 ? replies[index + 1] : undefined;
+    if (after) void playEntry(after);
+  };
 
   const seekTo = useCallback(
     (t: number) => {
       const el = audio.current;
-      if (!el || !render) return;
-      el.currentTime = snapSeek(render.words, t, el.duration || duration);
+      if (!el || !current) return;
+      el.currentTime = snapSeek(current.words, t, el.duration || duration);
       setNow(el.currentTime);
     },
-    [render, duration],
+    [current, duration],
   );
   const back = useCallback(() => seekTo((audio.current?.currentTime ?? 0) - SEEK_STEP_S), [seekTo]);
   const fwd = useCallback(() => seekTo((audio.current?.currentTime ?? 0) + SEEK_STEP_S), [seekTo]);
 
-  // ── Autoplay: only when switched on for THIS pane, and only once the reply is whole ─────
+  // ── Autoplay: when switched on, each new whole reply plays as it lands ─────
   const lastAuto = useRef<string | null>(reply?.uuid ?? null);
   useEffect(() => {
-    if (!autoplay || !ready || !reply || lastAuto.current === reply.uuid) return;
+    if (!autoplay || !reply || reply.partial || lastAuto.current === reply.uuid) return;
     lastAuto.current = reply.uuid;
-    void ensureRender().then((r) => r && playRender(r));
-  }, [autoplay, ready, reply, ensureRender, playRender]);
-
-  useEffect(() => {
-    try {
-      globalThis.localStorage?.setItem(autoplayKey(paneKey), autoplay ? "1" : "0");
-    } catch {
-      /* a private window keeps the switch for this visit only */
-    }
-  }, [autoplay, paneKey]);
+    void playEntry(reply);
+  }, [autoplay, reply, playEntry]);
 
   useEffect(() => {
     if (audio.current) audio.current.playbackRate = speed;
@@ -217,7 +318,7 @@ export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: C
     };
   }, []);
 
-  // ── Steering-wheel and lock-screen buttons (Media Session) ────────────────
+  // ── Steering-wheel and lock-screen buttons: track = a whole reply, seek = 5 s ─────
   useEffect(() => {
     const ms = navigator.mediaSession;
     if (!ms) return;
@@ -227,8 +328,8 @@ export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: C
       ["pause", () => audio.current?.pause()],
       ["seekbackward", back],
       ["seekforward", fwd],
-      ["previoustrack", back],
-      ["nexttrack", fwd],
+      ["previoustrack", prev],
+      ["nexttrack", next],
     ];
     for (const [a, h] of handlers) {
       try {
@@ -246,24 +347,118 @@ export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: C
         }
       }
     };
-  }, [paneLabel, togglePlay, back, fwd]);
+  }, [paneLabel, togglePlay, back, fwd, prev, next]);
 
-  useEffect(() => () => {
-    if (render) URL.revokeObjectURL(render.url);
-  }, [render]);
+  // ── The swipe: agents with something going on, in a stable order ──────────
+  const lineup = useMemo(() => {
+    const keys = nextLineup(carSession.lineup, agents, here, Date.now());
+    return keys.flatMap((k) => agents.filter((a) => paneRowKey(a) === k));
+  }, [agents, here]);
+  useEffect(() => {
+    carSession.lineup = lineup.map(paneRowKey);
+  }, [lineup]);
+  const at = lineup.findIndex((a) => paneRowKey(a) === here);
+  const left = at > 0 ? lineup[at - 1] : undefined;
+  const right = at >= 0 ? lineup[at + 1] : undefined;
+  const go = useCallback(
+    (pane: AgentView | undefined) => {
+      if (!pane) return;
+      audio.current?.pause();
+      onSwitch(pane);
+    },
+    [onSwitch],
+  );
+
+  // Touch: one finger sideways is a swipe (not inside a table that scrolls itself), two fingers pinch
+  // the text size. The document still scrolls up and down natively.
+  const touch = useRef<{ x: number; y: number; t: number; free: boolean } | null>(null);
+  const pinch = useRef<{ d: number; scale: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      pinch.current = { d: spread(e), scale };
+      touch.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    const inTable = e.target instanceof Element && e.target.closest("[data-hscroll]") !== null;
+    touch.current = t ? { x: t.clientX, y: t.clientY, t: Date.now(), free: !inTable } : null;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const p = pinch.current;
+    if (!p || e.touches.length !== 2 || p.d === 0) return;
+    setScale(Math.min(SCALE_MAX, Math.max(SCALE_MIN, p.scale * (spread(e) / p.d))));
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (pinch.current) {
+      if (e.touches.length < 2) {
+        pinch.current = null;
+        try {
+          globalThis.localStorage?.setItem(SCALE_KEY, String(scale));
+        } catch {
+          /* a private window keeps the size for this visit */
+        }
+      }
+      return;
+    }
+    const s = touch.current;
+    touch.current = null;
+    const t = e.changedTouches[0];
+    if (!s || !t || !s.free || Date.now() - s.t > SWIPE_MS) return;
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < 2 * Math.abs(dy)) return;
+    go(dx < 0 ? right : left);
+  };
+
+  // ── Talk: live words; Send sends, or quiet does when Autoplay is on ─────
+  const [talkNote, setTalkNote] = useState<string | null>(null);
+  const sendTalk = useRef<() => Promise<void>>(async () => {});
+  const autoplayRef = useRef(autoplay);
+  autoplayRef.current = autoplay;
+  const talk = useCarTalk({ onSilence: () => { if (autoplayRef.current) void sendTalk.current(); } });
+  sendTalk.current = async () => {
+    const words = await talk.finish();
+    if (!words) {
+      setTalkNote("Didn't catch anything.");
+      return;
+    }
+    const sent = (await onSend?.(words)) ?? false;
+    setTalkNote(sent ? `Sent: ${words}` : "Not sent: the pane couldn't take it, so it's in the message box.");
+  };
+  const startTalk = useCallback(() => {
+    audio.current?.pause();
+    setTalkNote(null);
+    void talk.start();
+  }, [talk]);
+  const talking = talk.phase === "starting" || talk.phase === "listening" || talk.phase === "finishing";
 
   // ── What to mark ──────────────────────────────────────────────────────────
-  const active = useMemo(() => {
-    if (!render) return null;
-    const i = wordAt(render.words, now);
-    if (i < 0) return null;
-    const word = render.words[i];
-    const seg = segmentAt(render.script, word.offset);
-    return seg ? { word, seg } : null;
-  }, [render, now]);
+  const active = useMemo((): CarActive | null => {
+    if (!current) return null;
+    const i = wordAt(current.words, now);
+    const word = i >= 0 ? current.words[i] : undefined;
+    return word ? { uuid: current.uuid, word } : null;
+  }, [current, now]);
 
-  const replyIsNewer = reply && render && reply.uuid !== render.uuid;
-  const line = carStatusLine(status, reply !== null);
+  const line = carStatusLine(status, replies.length > 0);
+  const overlay =
+    talking || talk.phase === "error" ? (
+      <p className="text-4xl leading-snug font-semibold">
+        {talk.phase === "error" ? (
+          talk.error
+        ) : talk.committed || talk.pending ? (
+          <>
+            {talk.committed} <span className="italic opacity-55">{talk.pending}</span>
+          </>
+        ) : (
+          <span className="opacity-55">{talk.phase === "starting" ? "Starting the mic…" : "Listening…"}</span>
+        )}
+      </p>
+    ) : talkNote ? (
+      <button type="button" onClick={() => setTalkNote(null)} className="w-full text-left text-3xl leading-snug font-semibold">
+        {talkNote} <span className="text-base font-normal text-muted-foreground">(tap to close)</span>
+      </button>
+    ) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background text-foreground" role="region" aria-label="Car mode">
@@ -273,72 +468,56 @@ export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: C
         preload="auto"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
+        onEnded={onEnded}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
       />
 
-      <header className="flex items-center gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2">
-        <div className="min-w-0 flex-1 truncate text-xl font-semibold">{paneLabel}</div>
-        <label className="flex items-center gap-2 text-base font-medium">
-          <input
-            type="checkbox"
-            className="size-6"
-            checked={autoplay}
-            onChange={(e) => setAutoplay(e.currentTarget.checked)}
-          />
-          Autoplay {autoplay ? "on" : "off"}
-        </label>
+      <header className="flex items-center gap-1 px-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <Neighbour pane={left} side="left" onGo={go} />
+        <div className="min-w-0 flex-1 truncate text-center text-xl font-black uppercase">{paneLabel}</div>
+        <Neighbour pane={right} side="right" onGo={go} />
         <button type="button" onClick={onExit} className="rounded-lg p-3" aria-label="Exit car mode">
           <X className="size-7" />
         </button>
       </header>
-
-      {/* What Play would read, before it is pressed: the shape and the word carry the state together. */}
-      <p className="flex items-center gap-3 px-4 pb-2 text-lg" aria-live="polite">
+      <div className="flex items-center gap-3 px-4 pb-2 text-lg" aria-live="polite">
         <StatusDot status={status} live className="size-5" />
-        <span className="font-bold">{line.word}</span>
-        <span className="text-muted-foreground">{line.play}</span>
-      </p>
+        <p className="min-w-0 flex-1">
+          <span className="font-bold">{line.word}</span> <span className="text-muted-foreground">{line.play}</span>
+        </p>
+        <label className="flex shrink-0 items-center gap-2 text-base font-medium">
+          <input type="checkbox" className="size-6" checked={autoplay} onChange={(e) => setAutoplay(e.currentTarget.checked)} />
+          Autoplay {autoplay ? "on" : "off"}
+        </label>
+      </div>
 
-      <main className="flex min-h-0 flex-1 items-center overflow-hidden px-4" aria-live="off">
-        {talking || talk.phase === "error" ? (
-          <p className="text-4xl leading-snug font-semibold">
-            {talk.phase === "error" ? (
-              talk.error
-            ) : talk.committed || talk.pending ? (
-              <>
-                {talk.committed} <span className="opacity-55 italic">{talk.pending}</span>
-              </>
-            ) : (
-              <span className="opacity-55">{talk.phase === "starting" ? "Starting the mic…" : "Listening…"}</span>
-            )}
-          </p>
-        ) : talkNote ? (
-          <p className="text-3xl leading-snug font-semibold">{talkNote}</p>
-        ) : error ? (
-          <p className="text-2xl font-semibold">{error}</p>
-        ) : !reply ? (
-          <p className="text-2xl text-muted-foreground">No reply in this pane yet.</p>
-        ) : !render ? (
-          <p className="text-2xl text-muted-foreground">
-            {loading ? "Rendering…" : reply.partial ? "The agent is still writing…" : "Tap Play to hear the latest reply."}
-          </p>
-        ) : (
-          <Caption script={render.script} active={active} />
+      <main
+        className="relative min-h-0 flex-1"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        <CarDocument
+          feed={feed}
+          scripts={scriptOf}
+          active={active}
+          current={current?.uuid ?? null}
+          scale={scale}
+          hasMore={data.hasMore}
+          loadingOlder={data.loadingOlder}
+          onLoadOlder={data.loadOlder}
+          onPlayFrom={playFrom}
+        />
+        {(overlay || error) && (
+          <div className="absolute inset-x-0 top-0 border-b-4 border-foreground bg-background p-4">
+            {overlay ?? <p className="text-2xl font-semibold">{error}</p>}
+          </div>
         )}
       </main>
 
-      {replyIsNewer && !autoplay && (
-        <p className="px-4 pb-1 text-base font-semibold">● New reply. Tap Play for the newest.</p>
-      )}
-
       {talking && (
-        <footer className="flex gap-3 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <button
-            type="button"
-            onClick={() => talk.cancel()}
-            className="h-24 flex-1 rounded-2xl border-4 border-foreground text-2xl font-bold"
-          >
+        <footer className="flex gap-3 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button type="button" onClick={() => talk.cancel()} className="h-24 flex-1 rounded-2xl border-4 border-foreground text-2xl font-bold">
             <X className="mr-2 inline size-8" />
             Cancel
           </button>
@@ -354,59 +533,71 @@ export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: C
         </footer>
       )}
 
-      <footer className={`px-4 pb-[max(1rem,env(safe-area-inset-bottom))] ${talking ? "hidden" : ""}`}>
+      <footer className={`border-t border-rule px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] ${talking ? "hidden" : ""}`}>
         {onSend && (
           <button
             type="button"
             onClick={startTalk}
-            className="mb-3 flex h-20 w-full items-center justify-center gap-3 rounded-2xl border-4 border-foreground text-2xl font-black"
+            className="mb-2 flex h-16 w-full items-center justify-center gap-3 rounded-2xl border-4 border-foreground text-2xl font-black"
           >
-            <Mic className="size-9" />
+            <Mic className="size-8" />
             Talk
           </button>
         )}
         <input
           type="range"
           aria-label="Timeline"
-          className="h-10 w-full"
+          className="h-8 w-full"
           min={0}
           max={duration || 0}
           step={0.1}
           value={now}
-          disabled={!render}
+          disabled={!current}
           onChange={(e) => seekTo(Number(e.currentTarget.value))}
         />
         <div className="flex justify-between text-base tabular-nums">
           <span>{fmt(now)}</span>
           <span>{fmt(duration)}</span>
         </div>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <button type="button" onClick={back} disabled={!render} className="flex flex-col items-center rounded-2xl p-4 disabled:opacity-40" aria-label="Back 5 seconds">
-            <RotateCcw className="size-12" />
-            <span className="text-sm font-semibold">5s</span>
+        <div className="mt-1 flex items-center justify-between">
+          <button type="button" onClick={prev} disabled={replies.length === 0} className="rounded-2xl p-2 disabled:opacity-40" aria-label="Previous reply">
+            <SkipBack className="size-9" />
+          </button>
+          <button type="button" onClick={back} disabled={!current} className="flex flex-col items-center rounded-2xl p-2 disabled:opacity-40" aria-label="Back 5 seconds">
+            <RotateCcw className="size-9" />
+            <span className="text-xs font-semibold">5s</span>
           </button>
           <button
             type="button"
             onClick={() => void togglePlay()}
-            disabled={!ready || loading}
-            className="flex size-28 items-center justify-center rounded-full bg-foreground text-background disabled:opacity-40"
+            disabled={replies.length === 0 || loading}
+            className="flex size-24 items-center justify-center rounded-full bg-foreground text-background disabled:opacity-40"
             aria-label={playing ? "Pause" : "Play"}
           >
-            {playing ? <Pause className="size-14" /> : <Play className="size-14" />}
+            {playing ? <Pause className="size-12" /> : <Play className="size-12" />}
           </button>
-          <button type="button" onClick={fwd} disabled={!render} className="flex flex-col items-center rounded-2xl p-4 disabled:opacity-40" aria-label="Forward 5 seconds">
-            <RotateCw className="size-12" />
-            <span className="text-sm font-semibold">5s</span>
+          <button type="button" onClick={fwd} disabled={!current} className="flex flex-col items-center rounded-2xl p-2 disabled:opacity-40" aria-label="Forward 5 seconds">
+            <RotateCw className="size-9" />
+            <span className="text-xs font-semibold">5s</span>
+          </button>
+          <button
+            type="button"
+            onClick={next}
+            disabled={index < 0 || index >= replies.length - 1}
+            className="rounded-2xl p-2 disabled:opacity-40"
+            aria-label="Next reply"
+          >
+            <SkipForward className="size-9" />
           </button>
         </div>
-        <div className="mt-3 flex justify-center gap-2" role="group" aria-label="Speed">
+        <div className="mt-2 flex justify-center gap-2" role="group" aria-label="Speed">
           {CAR_SPEEDS.map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setSpeed(s)}
               aria-pressed={speed === s}
-              className={`rounded-lg border-2 px-3 py-2 text-base ${speed === s ? "border-foreground font-black underline" : "border-transparent"}`}
+              className={`rounded-lg border-2 px-3 py-1 text-base ${speed === s ? "border-foreground font-black underline" : "border-transparent"}`}
             >
               {s}×
             </button>
@@ -417,75 +608,20 @@ export function CarView({ paneLabel, paneKey, reply, status, onExit, onSend }: C
   );
 }
 
-function Caption({
-  script,
-  active,
-}: {
-  script: CarScript;
-  active: { word: CarWord; seg: { start: number; end: number; target: CarTarget } } | null;
-}) {
-  if (!active) return <p className="text-3xl text-muted-foreground">Ready.</p>;
-  const { word, seg } = active;
-  const block = script.blocks[seg.target.block];
-
-  if (block?.kind === "table" && "row" in seg.target) {
-    const { row, col } = seg.target;
-    return (
-      <table className="w-full table-fixed border-collapse text-2xl">
-        <thead>
-          <tr>
-            {block.header.map((h, c) => (
-              <th key={c} className="border-b-2 border-foreground p-2 text-left">{spanText(h)}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {block.rows.map((cells, r) => (
-            <tr key={r} className={r === row ? "font-semibold" : "text-muted-foreground"}>
-              {cells.map((cell, c) => (
-                <td key={c} className={`p-2 ${r === row && c === col ? "font-black outline outline-4 -outline-offset-4 outline-foreground" : ""}`}>
-                  {spanText(cell)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  }
-
-  if (block?.kind === "code") {
-    return (
-      <pre className="max-h-full w-full overflow-hidden whitespace-pre-wrap rounded-lg border-4 border-foreground p-3 font-mono text-lg">
-        {block.text}
-      </pre>
-    );
-  }
-
-  // Prose: one PAGE of the spoken segment, the current word heavy, full-bright and underlined, the
-  // rest dimmed. Paging (rather than scrolling per word) keeps the line still for a glance.
-  const text = script.text;
-  const wStart = Math.max(seg.start, word.offset);
-  const wEnd = Math.min(seg.end, word.offset + word.length);
-  const [from, to] = captionPage(text, seg.start, seg.end, wStart);
+/** The agent beside this one in the swipe: an arrow, its status shape and its name. */
+function Neighbour({ pane, side, onGo }: { pane: AgentView | undefined; side: "left" | "right"; onGo: (p: AgentView) => void }) {
+  if (!pane) return <span className="w-[30%] shrink-0" />;
+  const name = paneName(pane);
   return (
-    <p className="text-4xl leading-snug font-normal">
-      <span className="opacity-55">{text.slice(from, wStart)}</span>
-      <span className="font-black underline decoration-4 underline-offset-8">{text.slice(wStart, wEnd)}</span>
-      <span className="opacity-55">{text.slice(wEnd, to)}</span>
-    </p>
+    <button
+      type="button"
+      onClick={() => onGo(pane)}
+      aria-label={`Switch to ${name}`}
+      className={`flex h-12 w-[30%] shrink-0 items-center gap-1 rounded-lg px-1 text-base font-semibold ${side === "right" ? "flex-row-reverse text-right" : ""}`}
+    >
+      {side === "left" ? <ChevronLeft className="size-6 shrink-0" /> : <ChevronRight className="size-6 shrink-0" />}
+      <StatusDot status={shownStatus(pane)} className="size-4" />
+      <span className="min-w-0 truncate">{name}</span>
+    </button>
   );
-}
-
-/** Words per caption page: what fits at text-4xl on a phone in portrait. */
-const PAGE_WORDS = 16;
-
-/** The `[from, to)` page of `[start, end)` holding offset `at`, cut on word boundaries. */
-function captionPage(text: string, start: number, end: number, at: number): [number, number] {
-  const starts: number[] = [];
-  for (const m of text.slice(start, end).matchAll(/\S+/g)) starts.push(start + m.index);
-  let i = starts.findLastIndex((s) => s <= at);
-  if (i < 0) i = 0;
-  const first = Math.floor(i / PAGE_WORDS) * PAGE_WORDS;
-  return [starts[first] ?? start, starts[first + PAGE_WORDS] ?? end];
 }
