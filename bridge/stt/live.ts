@@ -75,7 +75,8 @@ export function createLiveStt(opts: { baseUrl: string; fetchImpl?: LiveFetch; no
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
       body,
-      signal: AbortSignal.timeout(20_000),
+      // Generous: the engine may be starting from cold (it runs on demand and loads in ~25 s).
+      signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) throw new Error(`live stt ${res.status}`);
     let raw: JsonValue | undefined;

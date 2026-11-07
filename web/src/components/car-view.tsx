@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Mic, Pause, Play, RotateCcw, RotateCw, Send, SkipBack, SkipForward, X } from "lucide-react";
 
-import { synthesizeSpeech } from "@/lib/api";
+import { liveTranscribe, synthesizeSpeech } from "@/lib/api";
 import { buildCarScript, type CarScript } from "@/lib/car-script";
 import { CAR_SPEEDS, SEEK_STEP_S, snapSeek, wordAt, type CarWord } from "@/lib/car-clock";
 import { carFeed, feedReplies } from "@/lib/car-feed";
@@ -302,6 +302,16 @@ export function CarView({ paneId, scope, paneLabel, here, reply, status, agents,
     id = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(id);
   }, [playing]);
+
+  // ── Warm the engines on entry: on the host they start on demand and take ~20 s from cold, which
+  // is better spent while you settle in than after the first tap. The answers are thrown away.
+  const hasTalk = onSend !== undefined;
+  useEffect(() => {
+    const abort = new AbortController();
+    void synthesizeSpeech("Ready.", abort.signal).catch(() => {});
+    if (hasTalk) void liveTranscribe(crypto.randomUUID(), new Int16Array(1600), true, abort.signal).catch(() => {});
+    return () => abort.abort();
+  }, [hasTalk]);
 
   // ── Screen stays awake while car mode is open ─────────────────────────────
   useEffect(() => {
